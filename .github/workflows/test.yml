@@ -21,10 +21,11 @@ on:
         options:
           - 'all'
           - 'traditional'
+          - 'tmpfs'
           - 'mountable'
 
 jobs:
-  # Traditional cache benchmark (actions/cache)
+  # Traditional cache benchmark (actions/cache) - files and archive on disk
   traditional:
     if: ${{ inputs.mode == 'all' || inputs.mode == 'traditional' }}
     runs-on: ubuntu-latest
@@ -39,6 +40,40 @@ jobs:
         with:
           size-gb: ${{ inputs.size-gb }}
 
+  # Tmpfs cache benchmark (actions/cache) - files and archive in tmpfs (memory)
+  tmpfs:
+    if: ${{ inputs.mode == 'all' || inputs.mode == 'tmpfs' }}
+    runs-on: ubuntu-latest
+    outputs:
+      generate_time: ${{ steps.benchmark.outputs.generate_time }}
+      save_time: ${{ steps.benchmark.outputs.save_time }}
+      restore_time: ${{ steps.benchmark.outputs.restore_time }}
+    steps:
+      - name: Check tmpfs locations
+        run: |
+          echo "=== Checking tmpfs locations ==="
+          echo ""
+          echo "Filesystem mounts:"
+          mount | grep -E 'tmpfs|ramfs' || echo "No tmpfs/ramfs mounts found in mount output"
+          echo ""
+          echo "Checking candidate locations:"
+          for loc in /mnt/tmpfs /tmpfs /dev/shm /run; do
+            if [ -d "$loc" ]; then
+              echo "  $loc: EXISTS"
+              df -h "$loc" 2>/dev/null || echo "    (df failed)"
+            else
+              echo "  $loc: NOT FOUND"
+            fi
+          done
+          echo ""
+          
+      - name: Run tmpfs cache benchmark
+        id: benchmark
+        uses: GhadimiR/mountable-disks@main
+        with:
+          size-gb: ${{ inputs.size-gb }}
+          use-tmpfs: 'true'
+
   # Mountable cache benchmark (blobfuse2 + squashfs + overlayfs)
   mountable:
     if: ${{ inputs.mode == 'all' || inputs.mode == 'mountable' }}
@@ -52,6 +87,11 @@ jobs:
       individual_first_byte: ${{ steps.benchmark.outputs.individual_first_byte }}
       individual_sample_time: ${{ steps.benchmark.outputs.individual_sample_time }}
       individual_hydrate_time: ${{ steps.benchmark.outputs.individual_hydrate_time }}
+      juicefs_mount_time: ${{ steps.benchmark.outputs.juicefs_mount_time }}
+      juicefs_first_byte: ${{ steps.benchmark.outputs.juicefs_first_byte }}
+      juicefs_sample_time: ${{ steps.benchmark.outputs.juicefs_sample_time }}
+      juicefs_hydrate_cold: ${{ steps.benchmark.outputs.juicefs_hydrate_cold }}
+      juicefs_hydrate_warm: ${{ steps.benchmark.outputs.juicefs_hydrate_warm }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -70,7 +110,7 @@ jobs:
   # Summary
   summary:
     if: always() && inputs.mode == 'all'
-    needs: [traditional, mountable]
+    needs: [traditional, tmpfs, mountable]
     runs-on: ubuntu-latest
     steps:
       - name: Print comparison
@@ -79,21 +119,33 @@ jobs:
           echo "        BENCHMARK COMPARISON"
           echo "=========================================="
           echo ""
-          echo "TRADITIONAL CACHE (actions/cache v4):"
+          echo "TRADITIONAL CACHE (actions/cache v4 - disk):"
           echo "  Generate time:       ${{ needs.traditional.outputs.generate_time }}ms"
           echo "  Cache save time:     ${{ needs.traditional.outputs.save_time }}ms"
           echo "  Cache restore time:  ${{ needs.traditional.outputs.restore_time }}ms"
           echo ""
-          echo "MOUNTABLE CACHE - SQUASHFS (with blobfuse2 file cache):"
+          echo "TMPFS CACHE (actions/cache v4 - memory):"
+          echo "  Generate time:       ${{ needs.tmpfs.outputs.generate_time }}ms"
+          echo "  Cache save time:     ${{ needs.tmpfs.outputs.save_time }}ms"
+          echo "  Cache restore time:  ${{ needs.tmpfs.outputs.restore_time }}ms"
+          echo ""
+          echo "MOUNTABLE CACHE - SQUASHFS (blobfuse2 file cache):"
           echo "  Total mount time:      ${{ needs.mountable.outputs.cached_mount_time }}ms"
           echo "  Time to first byte:    ${{ needs.mountable.outputs.cached_first_byte }}ms"
           echo "  Full hydration (cold): ${{ needs.mountable.outputs.cached_hydrate_cold }}ms"
           echo "  Full read (warm):      ${{ needs.mountable.outputs.cached_hydrate_warm }}ms"
           echo ""
-          echo "MOUNTABLE CACHE - INDIVIDUAL FILES (on-demand):"
+          echo "MOUNTABLE CACHE - INDIVIDUAL FILES (blobfuse2 on-demand):"
           echo "  Total mount time:      ${{ needs.mountable.outputs.individual_mount_time }}ms"
           echo "  Time to first byte:    ${{ needs.mountable.outputs.individual_first_byte }}ms"
           echo "  10 random files:       ${{ needs.mountable.outputs.individual_sample_time }}ms"
           echo "  Full hydration:        ${{ needs.mountable.outputs.individual_hydrate_time }}ms"
+          echo ""
+          echo "JUICEFS (smart prefetch + block cache):"
+          echo "  Total mount time:      ${{ needs.mountable.outputs.juicefs_mount_time }}ms"
+          echo "  Time to first byte:    ${{ needs.mountable.outputs.juicefs_first_byte }}ms"
+          echo "  10 random files:       ${{ needs.mountable.outputs.juicefs_sample_time }}ms"
+          echo "  Full hydration (cold): ${{ needs.mountable.outputs.juicefs_hydrate_cold }}ms"
+          echo "  Full read (warm):      ${{ needs.mountable.outputs.juicefs_hydrate_warm }}ms"
           echo ""
           echo "==========================================" 

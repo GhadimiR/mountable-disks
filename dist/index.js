@@ -40383,19 +40383,66 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(7484));
 const cache = __importStar(__nccwpck_require__(5116));
 const path = __importStar(__nccwpck_require__(6928));
+const fs = __importStar(__nccwpck_require__(9896));
 const generate_1 = __nccwpck_require__(3516);
-const FILES_DIR = 'files';
+// Possible tmpfs locations on different systems
+const TMPFS_CANDIDATES = ['/mnt/tmpfs', '/tmpfs', '/dev/shm'];
+function findTmpfsLocation() {
+    for (const candidate of TMPFS_CANDIDATES) {
+        if (fs.existsSync(candidate)) {
+            // Verify it's actually a tmpfs by checking if it's writable
+            try {
+                const testFile = path.join(candidate, '.tmpfs-test');
+                fs.writeFileSync(testFile, 'test');
+                fs.unlinkSync(testFile);
+                return candidate;
+            }
+            catch {
+                core.debug(`${candidate} exists but is not writable`);
+            }
+        }
+    }
+    throw new Error(`No tmpfs location found. Tried: ${TMPFS_CANDIDATES.join(', ')}`);
+}
 async function run() {
     try {
-        const workDir = process.cwd();
-        const filesPath = path.join(workDir, FILES_DIR);
-        // Read size input
+        // Read inputs
         const sizeGb = parseInt(core.getInput('size-gb') || '8', 10);
         if (sizeGb < 1 || sizeGb > 10) {
             throw new Error('size-gb must be between 1 and 10');
         }
-        const cacheKey = `benchmark-cache-${sizeGb}gb-v1`;
+        const useTmpfs = core.getInput('use-tmpfs') === 'true';
+        // Determine paths based on tmpfs setting
+        let filesPath;
+        let originalRunnerTemp;
+        if (useTmpfs) {
+            const tmpfsDir = findTmpfsLocation();
+            const tmpfsRunnerTemp = path.join(tmpfsDir, 'runner-temp');
+            core.info('=== TMPFS MODE ENABLED ===');
+            core.info(`Detected tmpfs at: ${tmpfsDir}`);
+            core.info(`Using ${tmpfsDir}/benchmark-files for files`);
+            core.info(`Using ${tmpfsRunnerTemp} for cache archive`);
+            // Generate files in tmpfs
+            filesPath = path.join(tmpfsDir, 'benchmark-files');
+            // Create RUNNER_TEMP in tmpfs and override the environment variable
+            // This makes @actions/cache create/extract archives in tmpfs
+            if (!fs.existsSync(tmpfsRunnerTemp)) {
+                fs.mkdirSync(tmpfsRunnerTemp, { recursive: true });
+            }
+            originalRunnerTemp = process.env['RUNNER_TEMP'];
+            process.env['RUNNER_TEMP'] = tmpfsRunnerTemp;
+            core.info(`RUNNER_TEMP overridden: ${originalRunnerTemp} -> ${tmpfsRunnerTemp}`);
+        }
+        else {
+            const workDir = process.cwd();
+            filesPath = path.join(workDir, 'files');
+        }
+        // Use a different cache key for tmpfs to avoid conflicts
+        const cacheKey = useTmpfs
+            ? `benchmark-cache-tmpfs-${sizeGb}gb-v1`
+            : `benchmark-cache-${sizeGb}gb-v1`;
         core.info(`Configured for ${sizeGb}GB, cache key: ${cacheKey}`);
+        core.info(`Files path: ${filesPath}`);
         // Step 1: Generate the file hierarchy
         core.startGroup(`Step 1: Generate ${sizeGb}GB file hierarchy`);
         const genStart = Date.now();
@@ -40447,6 +40494,7 @@ async function run() {
         // Summary
         core.info('');
         core.info('=== Benchmark Summary ===');
+        core.info(`Mode:               ${useTmpfs ? 'TMPFS' : 'DISK'}`);
         core.info(`Generation time:    ${genTimeMs}ms`);
         core.info(`Cache save time:    ${saveTimeMs}ms`);
         core.info(`Deletion time:      ${deleteTimeMs}ms`);
@@ -40461,6 +40509,11 @@ async function run() {
         core.setOutput('restore_time', restoreTimeMs);
         core.setOutput('verify_time', verifyTimeMs);
         core.setOutput('total_time', genTimeMs + saveTimeMs + deleteTimeMs + restoreTimeMs + verifyTimeMs);
+        // Cleanup: restore RUNNER_TEMP if we modified it
+        if (useTmpfs && originalRunnerTemp !== undefined) {
+            process.env['RUNNER_TEMP'] = originalRunnerTemp;
+            core.info(`RUNNER_TEMP restored to: ${originalRunnerTemp}`);
+        }
     }
     catch (error) {
         if (error instanceof Error) {

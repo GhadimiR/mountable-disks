@@ -5,6 +5,23 @@ inputs:
     description: 'Size of data to generate in GB (1-10)'
     required: false
     default: '8'
+  use-tmpfs:
+    description: 'Generate files in tmpfs (/dev/shm) and use tmpfs for archive creation'
+    required: false
+    default: 'false'
+outputs:
+  generate_time:
+    description: 'Time to generate files in milliseconds'
+  save_time:
+    description: 'Time to save cache in milliseconds'
+  delete_time:
+    description: 'Time to delete files in milliseconds'
+  restore_time:
+    description: 'Time to restore cache in milliseconds'
+  verify_time:
+    description: 'Time to verify files in milliseconds'
+  total_time:
+    description: 'Total time in milliseconds'
 runs:
   using: 'node20'
   main: 'dist/index.js'
