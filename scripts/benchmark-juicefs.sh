@@ -97,7 +97,7 @@ sleep 1
 JUICEFS_FILE_COUNT=$(find "$JUICEFS_MOUNT" -type f 2>/dev/null | wc -l)
 echo "[$(time_ms)ms] Found $JUICEFS_FILE_COUNT files in JuiceFS"
 
-if [ "$JUICEFS_FILE_COUNT" -lt 10 ]; then
+if [ "$JUICEFS_FILE_COUNT" -lt 100 ]; then
     echo "[$(time_ms)ms] Uploading files to JuiceFS (this may take several minutes)..."
     echo "NOTE: This is a one-time setup cost. Subsequent runs will reuse this data."
     
@@ -109,14 +109,10 @@ if [ "$JUICEFS_FILE_COUNT" -lt 10 ]; then
     rm -rf "$JUICEFS_FILES_DIR"
     npm run generate -- "$SIZE_GB" "$JUICEFS_FILES_DIR"
     
-    echo "[$(time_ms)ms] Starting parallel copy to JuiceFS mount (1000 files, ~2GB)..."
+    echo "[$(time_ms)ms] Starting copy to JuiceFS mount..."
     JUICEFS_UPLOAD_START=$(time_ms)
     
-    # Use parallel cp for faster upload (xargs -P for parallelism)
-    find "$JUICEFS_FILES_DIR" -type f | xargs -P 8 -I {} cp {} "$JUICEFS_MOUNT/"
-    
-    # Alternative: just copy the directory structure
-    # This is simpler but may preserve structure better
+    # Simple recursive copy preserving directory structure
     cp -r "$JUICEFS_FILES_DIR"/* "$JUICEFS_MOUNT"/ &
     CP_PID=$!
     
@@ -127,12 +123,15 @@ if [ "$JUICEFS_FILE_COUNT" -lt 10 ]; then
         echo "[${ELAPSED}ms] Copied $COPIED files..."
         sleep 10
     done
-    wait $CP_PID
+    wait $CP_PID || true
     
     JUICEFS_UPLOAD_END=$(time_ms)
-    echo "[$(time_ms)ms] JuiceFS upload complete in $((JUICEFS_UPLOAD_END - JUICEFS_UPLOAD_START))ms"
+    FINAL_COUNT=$(find "$JUICEFS_MOUNT" -type f 2>/dev/null | wc -l)
+    echo "[$(time_ms)ms] JuiceFS upload complete: $FINAL_COUNT files in $((JUICEFS_UPLOAD_END - JUICEFS_UPLOAD_START))ms"
     
     rm -rf "$JUICEFS_FILES_DIR"
+else
+    echo "[$(time_ms)ms] JuiceFS already has $JUICEFS_FILE_COUNT files, skipping upload"
 fi
 fi
 

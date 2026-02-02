@@ -63,18 +63,27 @@ async function run(): Promise<void> {
       filesPath = path.join(workDir, 'files');
     }
 
-    // Both use same path now - key differentiates them
-    // Use unique key for each run to ensure fresh save/restore measurement
-    const runId = process.env['GITHUB_RUN_ID'] || Date.now().toString();
-    const cacheKey = useTmpfs 
-      ? `tmpfs-benchmark-${sizeGb}gb-${runId}`
-      : `benchmark-${sizeGb}gb-${runId}`;
+    // Use unique key per workflow run to ensure fresh save/restore
+    // GITHUB_RUN_ID + GITHUB_RUN_ATTEMPT ensures uniqueness even for re-runs
+    const runId = process.env['GITHUB_RUN_ID'] || 'local';
+    const runAttempt = process.env['GITHUB_RUN_ATTEMPT'] || '1';
+    const uniqueKey = `${runId}-${runAttempt}`;
     
-    core.info(`Configured for ${sizeGb}GB`);
+    const cacheKey = useTmpfs 
+      ? `tmpfs-${sizeGb}gb-${uniqueKey}`
+      : `disk-${sizeGb}gb-${uniqueKey}`;
+    
+    core.info('=== Configuration ===');
+    core.info(`Size: ${sizeGb}GB`);
+    core.info(`Mode: ${useTmpfs ? 'TMPFS' : 'DISK'}`);
     core.info(`Cache key: ${cacheKey}`);
     core.info(`Files path: ${filesPath}`);
+    core.info(`RUNNER_TEMP: ${process.env['RUNNER_TEMP']}`);
+    core.info(`GITHUB_RUN_ID: ${process.env['GITHUB_RUN_ID']}`);
+    core.info(`GITHUB_RUN_ATTEMPT: ${process.env['GITHUB_RUN_ATTEMPT']}`);
     core.info(`GITHUB_WORKSPACE: ${process.env['GITHUB_WORKSPACE']}`);
     core.info(`cwd: ${process.cwd()}`);
+    core.info('====================');
 
     // Step 1: Generate the file hierarchy
     core.startGroup(`Step 1: Generate ${sizeGb}GB file hierarchy`);
