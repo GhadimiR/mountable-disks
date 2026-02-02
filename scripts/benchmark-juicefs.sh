@@ -35,9 +35,8 @@ JUICEFS_CACHE_DIR="/tmp/juicefs-cache"
 # Use /tmp instead of /mnt to avoid permission issues
 mkdir -p "$JUICEFS_MOUNT" "$JUICEFS_OVERLAY_TARGET" "$JUICEFS_OVERLAY_UPPER" "$JUICEFS_OVERLAY_WORK" "$JUICEFS_CACHE_DIR"
 
-# Use unique volume name with timestamp to avoid "storage not empty" errors
-TIMESTAMP=$(date +%Y%m%d%H%M%S)
-JUICEFS_NAME="bench-${SIZE_GB}gb-${TIMESTAMP}"
+# Fixed volume name so data persists across runs
+JUICEFS_NAME="cache-bench-${SIZE_GB}gb"
 
 # Install JuiceFS
 echo "[$(time_ms)ms] Installing JuiceFS..."
@@ -56,39 +55,33 @@ JUICEFS_META_URL="redis://localhost:6379/1"
 
 echo "[$(time_ms)ms] Checking JuiceFS filesystem..."
 
-# Always destroy and recreate to avoid stale data issues
+# Check if filesystem already exists and is valid
 if juicefs status "$JUICEFS_META_URL" 2>/dev/null; then
-    echo "[$(time_ms)ms] Destroying existing JuiceFS filesystem..."
-    juicefs destroy "$JUICEFS_META_URL" "$JUICEFS_NAME" --force 2>/dev/null || true
-    sleep 1
-fi
-
-echo "[$(time_ms)ms] Formatting JuiceFS filesystem..."
-
-if [ -n "$AZURE_STORAGE_KEY" ]; then
-    # Use Storage Account Key (recommended)
-    echo "Using Azure Storage Account Key for authentication"
-    juicefs format \
-        --storage wasb \
-        --bucket "https://${ACCOUNT}.blob.core.windows.net/${CONTAINER}" \
-        --access-key "${ACCOUNT}" \
-        --secret-key "${AZURE_STORAGE_KEY}" \
-        --block-size 4096 \
-        --compress none \
-        --force \
-        "$JUICEFS_META_URL" \
-        "$JUICEFS_NAME"
+    echo "[$(time_ms)ms] JuiceFS filesystem already exists, reusing..."
 else
-    # Fallback: try SAS token in URL (may not work)
-    echo "WARNING: No storage key provided, trying SAS token in URL (may not work)"
-    juicefs format \
-        --storage wasb \
-        --bucket "https://${ACCOUNT}.blob.core.windows.net/${CONTAINER}?${SAS_TOKEN}" \
-        --block-size 4096 \
-        --compress none \
-        --force \
-        "$JUICEFS_META_URL" \
-        "$JUICEFS_NAME"
+    echo "[$(time_ms)ms] Formatting new JuiceFS filesystem..."
+    
+    if [ -n "$AZURE_STORAGE_KEY" ]; then
+        echo "Using Azure Storage Account Key for authentication"
+        juicefs format \
+            --storage wasb \
+            --bucket "https://${ACCOUNT}.blob.core.windows.net/${CONTAINER}" \
+            --access-key "${ACCOUNT}" \
+            --secret-key "${AZURE_STORAGE_KEY}" \
+            --block-size 16384 \
+            --compress none \
+            "$JUICEFS_META_URL" \
+            "$JUICEFS_NAME"
+    else
+        echo "WARNING: No storage key provided, trying SAS token in URL"
+        juicefs format \
+            --storage wasb \
+            --bucket "https://${ACCOUNT}.blob.core.windows.net/${CONTAINER}?${SAS_TOKEN}" \
+            --block-size 16384 \
+            --compress none \
+            "$JUICEFS_META_URL" \
+            "$JUICEFS_NAME"
+    fi
 fi
 
 # Check if files exist in JuiceFS
@@ -105,7 +98,8 @@ JUICEFS_FILE_COUNT=$(find "$JUICEFS_MOUNT" -type f 2>/dev/null | wc -l)
 echo "[$(time_ms)ms] Found $JUICEFS_FILE_COUNT files in JuiceFS"
 
 if [ "$JUICEFS_FILE_COUNT" -lt 10 ]; then
-    echo "[$(time_ms)ms] Uploading files to JuiceFS..."
+    echo "[$(time_ms)ms] Uploading files to JuiceFS (this may take several minutes)..."
+    echo "NOTE: This is a one-time setup cost. Subsequent runs will reuse this data."
     
     # Generate files if needed
     JUICEFS_FILES_DIR="$GITHUB_WORKSPACE/files-juicefs-upload"
@@ -115,12 +109,31 @@ if [ "$JUICEFS_FILE_COUNT" -lt 10 ]; then
     rm -rf "$JUICEFS_FILES_DIR"
     npm run generate -- "$SIZE_GB" "$JUICEFS_FILES_DIR"
     
+    echo "[$(time_ms)ms] Starting parallel copy to JuiceFS mount (1000 files, ~2GB)..."
     JUICEFS_UPLOAD_START=$(time_ms)
-    cp -r "$JUICEFS_FILES_DIR"/* "$JUICEFS_MOUNT"/
+    
+    # Use parallel cp for faster upload (xargs -P for parallelism)
+    find "$JUICEFS_FILES_DIR" -type f | xargs -P 8 -I {} cp {} "$JUICEFS_MOUNT/"
+    
+    # Alternative: just copy the directory structure
+    # This is simpler but may preserve structure better
+    cp -r "$JUICEFS_FILES_DIR"/* "$JUICEFS_MOUNT"/ &
+    CP_PID=$!
+    
+    # Show progress while copying
+    while kill -0 $CP_PID 2>/dev/null; do
+        COPIED=$(find "$JUICEFS_MOUNT" -type f 2>/dev/null | wc -l)
+        ELAPSED=$(($(time_ms) - JUICEFS_UPLOAD_START))
+        echo "[${ELAPSED}ms] Copied $COPIED files..."
+        sleep 10
+    done
+    wait $CP_PID
+    
     JUICEFS_UPLOAD_END=$(time_ms)
     echo "[$(time_ms)ms] JuiceFS upload complete in $((JUICEFS_UPLOAD_END - JUICEFS_UPLOAD_START))ms"
     
     rm -rf "$JUICEFS_FILES_DIR"
+fi
 fi
 
 # Unmount and remount to clear any local cache for fair test

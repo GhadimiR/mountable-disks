@@ -64,10 +64,11 @@ async function run(): Promise<void> {
     }
 
     // Both use same path now - key differentiates them
-    // Fixed key with v4 for fresh start
+    // Use unique key for each run to ensure fresh save/restore measurement
+    const runId = process.env['GITHUB_RUN_ID'] || Date.now().toString();
     const cacheKey = useTmpfs 
-      ? `tmpfs-benchmark-${sizeGb}gb-v4`
-      : `benchmark-cache-${sizeGb}gb-v1`;
+      ? `tmpfs-benchmark-${sizeGb}gb-${runId}`
+      : `benchmark-${sizeGb}gb-${runId}`;
     
     core.info(`Configured for ${sizeGb}GB`);
     core.info(`Cache key: ${cacheKey}`);
