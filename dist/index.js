@@ -40418,40 +40418,28 @@ async function run() {
         if (useTmpfs) {
             const tmpfsDir = findTmpfsLocation();
             const tmpfsRunnerTemp = path.join(tmpfsDir, 'runner-temp');
-            const tmpfsFilesDir = path.join(tmpfsDir, 'benchmark-files');
             core.info('=== TMPFS MODE ENABLED ===');
             core.info(`Detected tmpfs at: ${tmpfsDir}`);
-            core.info(`Files will be stored in: ${tmpfsFilesDir}`);
-            core.info(`Archive temp dir: ${tmpfsRunnerTemp}`);
+            core.info(`Archive temp dir (RUNNER_TEMP): ${tmpfsRunnerTemp}`);
+            core.info('Note: Files are generated in workspace, only archive I/O uses tmpfs');
             // Create RUNNER_TEMP in tmpfs for archive operations
+            // This makes tar/zstd compression and upload staging happen in memory
             if (!fs.existsSync(tmpfsRunnerTemp)) {
                 fs.mkdirSync(tmpfsRunnerTemp, { recursive: true });
             }
             originalRunnerTemp = process.env['RUNNER_TEMP'];
             process.env['RUNNER_TEMP'] = tmpfsRunnerTemp;
             core.info(`RUNNER_TEMP overridden: ${originalRunnerTemp} -> ${tmpfsRunnerTemp}`);
-            // Create a symlink in the workspace pointing to tmpfs
-            // This lets @actions/cache work with a workspace-relative path
-            // while actual I/O happens on tmpfs
+            // Files still go in workspace (required for @actions/cache to work correctly)
+            // The tmpfs benefit comes from archive operations being in memory
             const workDir = process.cwd();
             filesPath = path.join(workDir, 'files-tmpfs');
-            // Clean up any existing symlink/dir
-            if (fs.existsSync(filesPath)) {
-                fs.rmSync(filesPath, { recursive: true, force: true });
-            }
-            // Create the actual directory in tmpfs
-            if (!fs.existsSync(tmpfsFilesDir)) {
-                fs.mkdirSync(tmpfsFilesDir, { recursive: true });
-            }
-            // Create symlink: ./files-tmpfs -> /dev/shm/benchmark-files
-            fs.symlinkSync(tmpfsFilesDir, filesPath);
-            core.info(`Created symlink: ${filesPath} -> ${tmpfsFilesDir}`);
         }
         else {
             const workDir = process.cwd();
             filesPath = path.join(workDir, 'files');
         }
-        // Cache key - use simple key since path is now workspace-relative
+        // Cache key - different for tmpfs to avoid conflicts
         const cacheKey = useTmpfs
             ? `benchmark-cache-tmpfs-${sizeGb}gb-v1`
             : `benchmark-cache-${sizeGb}gb-v1`;

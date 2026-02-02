@@ -26,14 +26,15 @@ echo "  Container: $CONTAINER"
 echo "  Size: ${SIZE_GB}GB"
 echo ""
 
-JUICEFS_MOUNT="/mnt/juicefs"
+JUICEFS_MOUNT="/tmp/juicefs-mount"
 JUICEFS_OVERLAY_TARGET="./files-juicefs"
 JUICEFS_OVERLAY_UPPER="/tmp/juicefs-overlay-upper"
 JUICEFS_OVERLAY_WORK="/tmp/juicefs-overlay-work"
 JUICEFS_CACHE_DIR="/tmp/juicefs-cache"
 JUICEFS_NAME="benchmark-${SIZE_GB}gb"
 
-sudo mkdir -p "$JUICEFS_MOUNT" "$JUICEFS_OVERLAY_TARGET" "$JUICEFS_OVERLAY_UPPER" "$JUICEFS_OVERLAY_WORK" "$JUICEFS_CACHE_DIR"
+# Use /tmp instead of /mnt to avoid permission issues
+mkdir -p "$JUICEFS_MOUNT" "$JUICEFS_OVERLAY_TARGET" "$JUICEFS_OVERLAY_UPPER" "$JUICEFS_OVERLAY_WORK" "$JUICEFS_CACHE_DIR"
 
 # Install JuiceFS
 echo "[$(time_ms)ms] Installing JuiceFS..."
