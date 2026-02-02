@@ -24,14 +24,23 @@ echo ""
 # Expected format: https://<account>.blob.core.windows.net/<container>/<blob>?<sas>
 BLOB_URL_NO_SAS="${BLOB_SAS_URL%%\?*}"
 SAS_TOKEN="${BLOB_SAS_URL#*\?}"
-ACCOUNT=$(echo "$BLOB_URL_NO_SAS" | sed -E 's|https://([^.]+)\.blob\.core\.windows\.net.*|\1|')
-CONTAINER=$(echo "$BLOB_URL_NO_SAS" | sed -E 's|https://[^/]+/([^/]+)/.*|\1|')
-BLOB_NAME=$(echo "$BLOB_URL_NO_SAS" | sed -E 's|https://[^/]+/[^/]+/(.*)|\1|')
 
-echo "Account: $ACCOUNT"
-echo "Container: $CONTAINER"
-echo "Blob: $BLOB_NAME"
-echo "Size: ${SIZE_GB}GB"
+# Extract account name
+ACCOUNT=$(echo "$BLOB_URL_NO_SAS" | sed -E 's|https://([^.]+)\.blob\.core\.windows\.net/.*|\1|')
+
+# Extract path after the domain (container/blob)
+URL_PATH=$(echo "$BLOB_URL_NO_SAS" | sed -E 's|https://[^/]+/(.*)|\1|')
+
+# First segment is container, rest is blob name
+CONTAINER=$(echo "$URL_PATH" | cut -d'/' -f1)
+BLOB_NAME=$(echo "$URL_PATH" | cut -d'/' -f2-)
+
+echo "Parsed URL:"
+echo "  Account: $ACCOUNT"
+echo "  Container: $CONTAINER"
+echo "  Blob: $BLOB_NAME"
+echo "  SAS length: ${#SAS_TOKEN} chars"
+echo "  Size: ${SIZE_GB}GB"
 echo ""
 
 # Check if blob exists
@@ -104,13 +113,21 @@ sudo mkdir -p "$MOUNT_POINT" "$SQUASHFS_MOUNT" "$OVERLAY_UPPER" "$OVERLAY_WORK" 
 #############################################
 echo "=== Benchmark 1: Streaming (no local cache) ==="
 
+# Debug output
+echo "DEBUG: Account=$ACCOUNT"
+echo "DEBUG: Container=$CONTAINER"
+echo "DEBUG: Blob=$BLOB_NAME"
+echo "DEBUG: SAS token length=${#SAS_TOKEN}"
+
 MOUNT_START=$(time_ms)
 
 # Create blobfuse2 config for streaming (no cache)
+# Note: SAS token must be quoted to handle special characters
 cat > /tmp/blobfuse-streaming.yaml << EOF
 allow-other: true
 logging:
-  type: silent
+  type: syslog
+  level: log_debug
 components:
   - libfuse
   - azstorage
@@ -124,8 +141,11 @@ azstorage:
   container: ${CONTAINER}
   endpoint: https://${ACCOUNT}.blob.core.windows.net
   mode: sas
-  sas: ${SAS_TOKEN}
+  sas: "${SAS_TOKEN}"
 EOF
+
+echo "DEBUG: blobfuse2 config:"
+cat /tmp/blobfuse-streaming.yaml
 
 sudo blobfuse2 mount "$MOUNT_POINT" --config-file=/tmp/blobfuse-streaming.yaml --read-only
 
