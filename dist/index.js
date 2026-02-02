@@ -40390,6 +40390,7 @@ const TMPFS_CANDIDATES = ['/mnt/tmpfs', '/tmpfs', '/dev/shm'];
 const SAVE_RETRY_ATTEMPTS = 3;
 const RESTORE_RETRY_ATTEMPTS = 6;
 const RETRY_BASE_DELAY_MS = 5000;
+const AVAILABILITY_RETRY_ATTEMPTS = 12;
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -40436,6 +40437,21 @@ async function restoreCacheWithRetry(paths, key) {
         }
     }
     throw lastError ?? new Error('Cache restore failed after retries');
+}
+async function waitForCacheAvailability(paths, key) {
+    for (let attempt = 1; attempt <= AVAILABILITY_RETRY_ATTEMPTS; attempt++) {
+        const restoredKey = await cache.restoreCache(paths, key, [], {
+            lookupOnly: true
+        });
+        if (restoredKey) {
+            core.info(`Cache is now available (attempt ${attempt}/${AVAILABILITY_RETRY_ATTEMPTS}).`);
+            return;
+        }
+        const delay = RETRY_BASE_DELAY_MS * attempt;
+        core.info(`Cache not available yet (attempt ${attempt}/${AVAILABILITY_RETRY_ATTEMPTS}). Waiting ${delay}ms...`);
+        await sleep(delay);
+    }
+    throw new Error('Cache did not become available after upload');
 }
 function findTmpfsLocation() {
     for (const candidate of TMPFS_CANDIDATES) {
@@ -40528,6 +40544,10 @@ async function run() {
             core.info(`Cache saved with ID: ${cacheId}`);
         }
         core.info(`[${saveTimeMs}ms] Cache save complete`);
+        core.endGroup();
+        // Ensure cache is available before deleting local files
+        core.startGroup('Step 2b: Wait for cache availability');
+        await waitForCacheAvailability([filesPath], cacheKey);
         core.endGroup();
         // Step 3: Delete the directory
         core.startGroup('Step 3: Delete file hierarchy');

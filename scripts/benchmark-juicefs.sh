@@ -39,7 +39,7 @@ mkdir -p "$JUICEFS_MOUNT" "$JUICEFS_OVERLAY_TARGET" "$JUICEFS_OVERLAY_UPPER" "$J
 RUN_ID="${GITHUB_RUN_ID:-local}"
 RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT:-1}"
 JUICEFS_NAME="cache-bench-${SIZE_GB}gb-${RUN_ID}-${RUN_ATTEMPT}"
-JUICEFS_BUCKET_BASE="https://${ACCOUNT}.blob.core.windows.net/${CONTAINER}/juicefs-${JUICEFS_NAME}"
+JUICEFS_BUCKET_BASE="https://${ACCOUNT}.blob.core.windows.net/${CONTAINER}"
 
 # Install JuiceFS
 echo "[$(time_ms)ms] Installing JuiceFS..."
