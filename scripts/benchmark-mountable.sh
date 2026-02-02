@@ -20,20 +20,23 @@ time_ms() {
 echo "=== Mountable Cache Benchmark ==="
 echo ""
 
-# Parse blob URL for components
-# Expected format: https://<account>.blob.core.windows.net/<container>/<blob>?<sas>
-BLOB_URL_NO_SAS="${BLOB_SAS_URL%%\?*}"
+# Parse container SAS URL and construct blob URL
+# Expected format: https://<account>.blob.core.windows.net/<container>?<sas>
+# We'll add the blob name based on SIZE_GB
+CONTAINER_URL_NO_SAS="${BLOB_SAS_URL%%\?*}"
 SAS_TOKEN="${BLOB_SAS_URL#*\?}"
 
 # Extract account name
-ACCOUNT=$(echo "$BLOB_URL_NO_SAS" | sed -E 's|https://([^.]+)\.blob\.core\.windows\.net/.*|\1|')
+ACCOUNT=$(echo "$CONTAINER_URL_NO_SAS" | sed -E 's|https://([^.]+)\.blob\.core\.windows\.net/.*|\1|')
 
-# Extract path after the domain (container/blob)
-URL_PATH=$(echo "$BLOB_URL_NO_SAS" | sed -E 's|https://[^/]+/(.*)|\1|')
+# Extract container (everything after the domain)
+CONTAINER=$(echo "$CONTAINER_URL_NO_SAS" | sed -E 's|https://[^/]+/(.*)|\1|')
 
-# First segment is container, rest is blob name
-CONTAINER=$(echo "$URL_PATH" | cut -d'/' -f1)
-BLOB_NAME=$(echo "$URL_PATH" | cut -d'/' -f2-)
+# Construct blob name from size
+BLOB_NAME="cache-${SIZE_GB}gb.squashfs"
+
+# Full blob URL for uploads/checks
+FULL_BLOB_URL="${CONTAINER_URL_NO_SAS}/${BLOB_NAME}?${SAS_TOKEN}"
 
 echo "Parsed URL:"
 echo "  Account: $ACCOUNT"
@@ -45,7 +48,7 @@ echo ""
 
 # Check if blob exists
 echo "Checking if blob exists..."
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -I "${BLOB_SAS_URL}")
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -I "${FULL_BLOB_URL}")
 
 if [ "$HTTP_STATUS" == "200" ]; then
     echo "Blob exists, skipping upload."
@@ -77,12 +80,13 @@ else
     echo "=== Uploading to Azure Blob Storage ==="
     SQUASHFS_SIZE=$(stat -c%s "$LOCAL_SQUASHFS")
     echo "File size: $SQUASHFS_SIZE bytes"
+    echo "Uploading to: $FULL_BLOB_URL"
     
     curl -X PUT \
         -H "x-ms-blob-type: BlockBlob" \
         -H "Content-Type: application/octet-stream" \
         -T "$LOCAL_SQUASHFS" \
-        "${BLOB_SAS_URL}"
+        "${FULL_BLOB_URL}"
     
     echo ""
     echo "Upload complete."
