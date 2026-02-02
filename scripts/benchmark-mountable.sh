@@ -177,6 +177,7 @@ echo "[${OVERLAY_END}ms] Total mount time (streaming): ${TOTAL_MOUNT_TIME}ms"
 # Time to first file
 FIRST_FILE_START=$(time_ms)
 FIRST_FILE=$(find "$OVERLAY_TARGET" -type f | head -1)
+echo "First file: $FIRST_FILE"
 head -c 1 "$FIRST_FILE" > /dev/null
 FIRST_FILE_END=$(time_ms)
 FIRST_FILE_TIME=$((FIRST_FILE_END - FIRST_FILE_START))
@@ -184,28 +185,31 @@ echo "[${FIRST_FILE_END}ms] Time to first byte: ${FIRST_FILE_TIME}ms"
 
 # Count total files for progress
 TOTAL_FILES=$(find "$OVERLAY_TARGET" -type f | wc -l)
-echo "Total files to hydrate: $TOTAL_FILES"
+TOTAL_SIZE_MB=$((TOTAL_FILES * 2)) # 2MB per file
+echo "Total files to hydrate: $TOTAL_FILES ($TOTAL_SIZE_MB MB)"
 
-# Full read (hydration) with progress
+# Full read (hydration) with progress using parallel reads
+echo "Starting full hydration (streaming)..."
 HYDRATE_START=$(time_ms)
-FILES_READ=0
-BYTES_READ=0
-find "$OVERLAY_TARGET" -type f | while read -r file; do
-    FILE_SIZE=$(stat -c%s "$file" 2>/dev/null || stat -f%z "$file")
-    cat "$file" > /dev/null
-    FILES_READ=$((FILES_READ + 1))
-    BYTES_READ=$((BYTES_READ + FILE_SIZE))
-    
-    # Progress every 50 files
-    if [ $((FILES_READ % 50)) -eq 0 ]; then
-        ELAPSED=$(($(time_ms) - HYDRATE_START))
-        MB_READ=$((BYTES_READ / 1024 / 1024))
-        RATE=$((MB_READ * 1000 / (ELAPSED + 1)))
-        echo "[${ELAPSED}ms] Hydrating: ${FILES_READ}/${TOTAL_FILES} files, ${MB_READ}MB read (${RATE} MB/s)"
-    fi
-done
+
+# Use xargs for parallel reads - much faster than sequential
+find "$OVERLAY_TARGET" -type f | xargs -P 8 -I {} sh -c 'cat "{}" > /dev/null && echo -n "."' 2>&1 | {
+    COUNT=0
+    while IFS= read -r -n1 char; do
+        COUNT=$((COUNT + 1))
+        if [ $((COUNT % 100)) -eq 0 ]; then
+            ELAPSED=$(($(date +%s%3N) - HYDRATE_START))
+            MB_READ=$((COUNT * 2))
+            RATE=$((MB_READ * 1000 / (ELAPSED + 1)))
+            echo ""
+            echo "[${ELAPSED}ms] Progress: ${COUNT}/${TOTAL_FILES} files, ${MB_READ}MB (${RATE} MB/s)"
+        fi
+    done
+}
+
 HYDRATE_END=$(time_ms)
 HYDRATE_TIME=$((HYDRATE_END - HYDRATE_START))
+echo ""
 echo "[${HYDRATE_END}ms] Full hydration (streaming): ${HYDRATE_TIME}ms"
 
 # Cleanup
@@ -281,48 +285,50 @@ FIRST_FILE_END=$(time_ms)
 FIRST_FILE_TIME=$((FIRST_FILE_END - FIRST_FILE_START))
 echo "[${FIRST_FILE_END}ms] Time to first byte: ${FIRST_FILE_TIME}ms"
 
-# Full read (hydration) - first pass with progress
-echo "Hydrating (cold cache)..."
+# Full read (hydration) - first pass with parallel reads
+echo "Hydrating (cold cache) with 8 parallel readers..."
 HYDRATE_START=$(time_ms)
-FILES_READ=0
-BYTES_READ=0
-find "$OVERLAY_TARGET" -type f | while read -r file; do
-    FILE_SIZE=$(stat -c%s "$file" 2>/dev/null || stat -f%z "$file")
-    cat "$file" > /dev/null
-    FILES_READ=$((FILES_READ + 1))
-    BYTES_READ=$((BYTES_READ + FILE_SIZE))
-    
-    if [ $((FILES_READ % 50)) -eq 0 ]; then
-        ELAPSED=$(($(time_ms) - HYDRATE_START))
-        MB_READ=$((BYTES_READ / 1024 / 1024))
-        RATE=$((MB_READ * 1000 / (ELAPSED + 1)))
-        echo "[${ELAPSED}ms] Hydrating (cold): ${FILES_READ}/${TOTAL_FILES} files, ${MB_READ}MB (${RATE} MB/s)"
-    fi
-done
+
+find "$OVERLAY_TARGET" -type f | xargs -P 8 -I {} sh -c 'cat "{}" > /dev/null && echo -n "."' 2>&1 | {
+    COUNT=0
+    while IFS= read -r -n1 char; do
+        COUNT=$((COUNT + 1))
+        if [ $((COUNT % 100)) -eq 0 ]; then
+            ELAPSED=$(($(date +%s%3N) - HYDRATE_START))
+            MB_READ=$((COUNT * 2))
+            RATE=$((MB_READ * 1000 / (ELAPSED + 1)))
+            echo ""
+            echo "[${ELAPSED}ms] Cold cache: ${COUNT}/${TOTAL_FILES} files, ${MB_READ}MB (${RATE} MB/s)"
+        fi
+    done
+}
+
 HYDRATE_END=$(time_ms)
 HYDRATE_TIME=$((HYDRATE_END - HYDRATE_START))
+echo ""
 echo "[${HYDRATE_END}ms] Full hydration (cold cache): ${HYDRATE_TIME}ms"
 
-# Full read (hydration) - second pass (from local cache) with progress
-echo "Reading (warm cache)..."
+# Full read (hydration) - second pass (from local cache) with parallel reads
+echo "Reading (warm cache) with 8 parallel readers..."
 HYDRATE2_START=$(time_ms)
-FILES_READ=0
-BYTES_READ=0
-find "$OVERLAY_TARGET" -type f | while read -r file; do
-    FILE_SIZE=$(stat -c%s "$file" 2>/dev/null || stat -f%z "$file")
-    cat "$file" > /dev/null
-    FILES_READ=$((FILES_READ + 1))
-    BYTES_READ=$((BYTES_READ + FILE_SIZE))
-    
-    if [ $((FILES_READ % 50)) -eq 0 ]; then
-        ELAPSED=$(($(time_ms) - HYDRATE2_START))
-        MB_READ=$((BYTES_READ / 1024 / 1024))
-        RATE=$((MB_READ * 1000 / (ELAPSED + 1)))
-        echo "[${ELAPSED}ms] Reading (warm): ${FILES_READ}/${TOTAL_FILES} files, ${MB_READ}MB (${RATE} MB/s)"
-    fi
-done
+
+find "$OVERLAY_TARGET" -type f | xargs -P 8 -I {} sh -c 'cat "{}" > /dev/null && echo -n "."' 2>&1 | {
+    COUNT=0
+    while IFS= read -r -n1 char; do
+        COUNT=$((COUNT + 1))
+        if [ $((COUNT % 100)) -eq 0 ]; then
+            ELAPSED=$(($(date +%s%3N) - HYDRATE2_START))
+            MB_READ=$((COUNT * 2))
+            RATE=$((MB_READ * 1000 / (ELAPSED + 1)))
+            echo ""
+            echo "[${ELAPSED}ms] Warm cache: ${COUNT}/${TOTAL_FILES} files, ${MB_READ}MB (${RATE} MB/s)"
+        fi
+    done
+}
+
 HYDRATE2_END=$(time_ms)
 HYDRATE2_TIME=$((HYDRATE2_END - HYDRATE2_START))
+echo ""
 echo "[${HYDRATE2_END}ms] Full read (warm cache): ${HYDRATE2_TIME}ms"
 
 # Cleanup
