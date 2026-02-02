@@ -126,7 +126,7 @@ jobs:
         id: benchmark
         run: |
           chmod +x scripts/benchmark-juicefs.sh
-          scripts/benchmark-juicefs.sh "${{ secrets.CACHE_BLOB_SAS_URL }}" "${{ inputs.size-gb }}"
+          scripts/benchmark-juicefs.sh "${{ secrets.CACHE_BLOB_SAS_URL }}" "${{ inputs.size-gb }}" "${{ secrets.AZURE_STORAGE_KEY }}"
 
   # Summary
   summary:
