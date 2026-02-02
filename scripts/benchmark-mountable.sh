@@ -20,34 +20,34 @@ time_ms() {
 echo "=== Mountable Cache Benchmark ==="
 echo ""
 
-# Parse blob SAS URL
-# Expected format: https://<account>.blob.core.windows.net/<container>/<blob>?<sas>
-BLOB_URL_NO_SAS="${BLOB_SAS_URL%%\?*}"
+# Parse container SAS URL and construct blob URL
+# Expected format: https://<account>.blob.core.windows.net/<container>?<sas>
+# The SAS must have List permission for blobfuse2 to work
+CONTAINER_URL_NO_SAS="${BLOB_SAS_URL%%\?*}"
 SAS_TOKEN="${BLOB_SAS_URL#*\?}"
 
 # Extract account name
-ACCOUNT=$(echo "$BLOB_URL_NO_SAS" | sed -E 's|https://([^.]+)\.blob\.core\.windows\.net/.*|\1|')
+ACCOUNT=$(echo "$CONTAINER_URL_NO_SAS" | sed -E 's|https://([^.]+)\.blob\.core\.windows\.net/.*|\1|')
 
-# Extract path after the domain (container/blob)
-URL_PATH=$(echo "$BLOB_URL_NO_SAS" | sed -E 's|https://[^/]+/(.*)|\1|')
+# Extract container (everything after the domain, removing any trailing slash)
+CONTAINER=$(echo "$CONTAINER_URL_NO_SAS" | sed -E 's|https://[^/]+/||' | sed 's|/$||')
 
-# First segment is container, rest is blob name
-CONTAINER=$(echo "$URL_PATH" | cut -d'/' -f1)
-BLOB_NAME=$(echo "$URL_PATH" | cut -d'/' -f2-)
+# Construct blob name from size
+BLOB_NAME="cache-${SIZE_GB}gb.squashfs"
 
-# Use the SAS URL directly as provided
-FULL_BLOB_URL="${BLOB_SAS_URL}"
+# Full blob URL for uploads/checks
+FULL_BLOB_URL="${CONTAINER_URL_NO_SAS}/${BLOB_NAME}?${SAS_TOKEN}"
 
 echo "Parsed URL:"
 echo "  Account: $ACCOUNT"
 echo "  Container: $CONTAINER"
-echo "  Blob: $BLOB_NAME"
+echo "  Blob: $BLOB_NAME (constructed from size)"
 echo "  SAS length: ${#SAS_TOKEN} chars"
 echo "  Size: ${SIZE_GB}GB"
 echo ""
 
 # Check if blob exists
-echo "Checking if blob exists..."
+echo "Checking if blob exists at: ${CONTAINER_URL_NO_SAS}/${BLOB_NAME}"
 HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -I "${FULL_BLOB_URL}")
 
 if [ "$HTTP_STATUS" == "200" ]; then
