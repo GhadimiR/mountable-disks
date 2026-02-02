@@ -27,7 +27,7 @@ echo "  Size: ${SIZE_GB}GB"
 echo ""
 
 JUICEFS_MOUNT="/tmp/juicefs-mount"
-JUICEFS_OVERLAY_TARGET="./files-juicefs"
+JUICEFS_OVERLAY_TARGET="/tmp/juicefs-files"
 JUICEFS_OVERLAY_UPPER="/tmp/juicefs-overlay-upper"
 JUICEFS_OVERLAY_WORK="/tmp/juicefs-overlay-work"
 JUICEFS_CACHE_DIR="/tmp/juicefs-cache"
@@ -130,6 +130,8 @@ if [ "$JUICEFS_FILE_COUNT" -lt 100 ]; then
     wait $CP_PID || true
     
     JUICEFS_UPLOAD_END=$(time_ms)
+    sync
+    sleep 2
     FINAL_COUNT=$(find "$JUICEFS_MOUNT" -type f 2>/dev/null | wc -l)
     echo "[$(time_ms)ms] JuiceFS upload complete: $FINAL_COUNT files in $((JUICEFS_UPLOAD_END - JUICEFS_UPLOAD_START))ms"
     
@@ -171,8 +173,21 @@ echo "[${JUICEFS_OVERLAY_TIME}ms] overlayfs mount complete: ${JUICEFS_OVERLAY_TI
 JUICEFS_TOTAL_MOUNT=$((JUICEFS_MOUNT_TIME + JUICEFS_OVERLAY_TIME))
 echo "[${JUICEFS_TOTAL_MOUNT}ms] Total mount time (JuiceFS): ${JUICEFS_TOTAL_MOUNT}ms"
 
-# Count files
-JUICEFS_TOTAL_FILES=$(find "$JUICEFS_OVERLAY_TARGET" -type f 2>/dev/null | wc -l)
+# Count files (retry a few times in case metadata is still populating)
+JUICEFS_TOTAL_FILES=0
+for attempt in 1 2 3 4 5 6; do
+    JUICEFS_TOTAL_FILES=$(find "$JUICEFS_OVERLAY_TARGET" -type f 2>/dev/null | wc -l)
+    if [ "$JUICEFS_TOTAL_FILES" -gt 0 ]; then
+        break
+    fi
+    echo "[$(time_ms)ms] No files visible yet (attempt $attempt/6), waiting..."
+    sleep 5
+done
+
+if [ "$JUICEFS_TOTAL_FILES" -eq 0 ]; then
+    echo "ERROR: No files visible after remount. Failing to avoid misleading benchmark."
+    exit 1
+fi
 JUICEFS_TOTAL_SIZE_MB=$((JUICEFS_TOTAL_FILES * 2))
 echo "Total files: $JUICEFS_TOTAL_FILES ($JUICEFS_TOTAL_SIZE_MB MB)"
 

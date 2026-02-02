@@ -40387,6 +40387,56 @@ const fs = __importStar(__nccwpck_require__(9896));
 const generate_1 = __nccwpck_require__(3516);
 // Possible tmpfs locations on different systems
 const TMPFS_CANDIDATES = ['/mnt/tmpfs', '/tmpfs', '/dev/shm'];
+const SAVE_RETRY_ATTEMPTS = 3;
+const RESTORE_RETRY_ATTEMPTS = 6;
+const RETRY_BASE_DELAY_MS = 5000;
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+async function saveCacheWithRetry(paths, key) {
+    let lastError;
+    for (let attempt = 1; attempt <= SAVE_RETRY_ATTEMPTS; attempt++) {
+        try {
+            core.info(`Cache save attempt ${attempt}/${SAVE_RETRY_ATTEMPTS}...`);
+            const cacheId = await cache.saveCache(paths, key);
+            if (cacheId === -1) {
+                throw new Error('Cache save returned -1 (cache not saved)');
+            }
+            return cacheId;
+        }
+        catch (error) {
+            lastError = error instanceof Error ? error : new Error(String(error));
+            if (attempt < SAVE_RETRY_ATTEMPTS) {
+                const delay = RETRY_BASE_DELAY_MS * attempt;
+                core.warning(`Cache save attempt ${attempt} failed: ${lastError.message}. Retrying in ${delay}ms.`);
+                await sleep(delay);
+            }
+        }
+    }
+    throw lastError ?? new Error('Cache save failed after retries');
+}
+async function restoreCacheWithRetry(paths, key) {
+    let lastError;
+    for (let attempt = 1; attempt <= RESTORE_RETRY_ATTEMPTS; attempt++) {
+        try {
+            core.info(`Cache restore attempt ${attempt}/${RESTORE_RETRY_ATTEMPTS}...`);
+            const restoredKey = await cache.restoreCache(paths, key);
+            if (!restoredKey) {
+                throw new Error('Cache restore returned undefined');
+            }
+            return restoredKey;
+        }
+        catch (error) {
+            lastError = error instanceof Error ? error : new Error(String(error));
+            if (attempt < RESTORE_RETRY_ATTEMPTS) {
+                const delay = RETRY_BASE_DELAY_MS * attempt;
+                core.warning(`Cache restore attempt ${attempt} failed: ${lastError.message}. Retrying in ${delay}ms.`);
+                await sleep(delay);
+            }
+        }
+    }
+    throw lastError ?? new Error('Cache restore failed after retries');
+}
 function findTmpfsLocation() {
     for (const candidate of TMPFS_CANDIDATES) {
         if (fs.existsSync(candidate)) {
@@ -40418,20 +40468,23 @@ async function run() {
         if (useTmpfs) {
             const tmpfsDir = findTmpfsLocation();
             const tmpfsRunnerTemp = path.join(tmpfsDir, 'runner-temp');
+            const tmpfsFilesRoot = path.join(tmpfsDir, 'cache-benchmark');
             core.info('=== TMPFS MODE ENABLED ===');
             core.info(`Detected tmpfs at: ${tmpfsDir}`);
             core.info(`Archive temp dir (RUNNER_TEMP): ${tmpfsRunnerTemp}`);
-            core.info('Files on disk, archive I/O in tmpfs - testing upload/download without disk I/O');
+            core.info(`Files dir (tmpfs): ${tmpfsFilesRoot}`);
+            core.info('Files and archive I/O in tmpfs - testing upload/download from memory');
             // Create RUNNER_TEMP in tmpfs for archive operations
             if (!fs.existsSync(tmpfsRunnerTemp)) {
                 fs.mkdirSync(tmpfsRunnerTemp, { recursive: true });
             }
+            if (!fs.existsSync(tmpfsFilesRoot)) {
+                fs.mkdirSync(tmpfsFilesRoot, { recursive: true });
+            }
             originalRunnerTemp = process.env['RUNNER_TEMP'];
             process.env['RUNNER_TEMP'] = tmpfsRunnerTemp;
             core.info(`RUNNER_TEMP overridden: ${originalRunnerTemp} -> ${tmpfsRunnerTemp}`);
-            // Use same path structure as traditional but different directory name
-            const workDir = process.cwd();
-            filesPath = path.join(workDir, 'files');
+            filesPath = path.join(tmpfsFilesRoot, 'files');
         }
         else {
             const workDir = process.cwd();
@@ -40439,9 +40492,9 @@ async function run() {
         }
         // Use unique key per workflow run to ensure fresh save/restore
         // GITHUB_RUN_ID + GITHUB_RUN_ATTEMPT ensures uniqueness even for re-runs
-        const runId = process.env['GITHUB_RUN_ID'] || 'local';
+        const runId = process.env['GITHUB_RUN_ID'];
         const runAttempt = process.env['GITHUB_RUN_ATTEMPT'] || '1';
-        const uniqueKey = `${runId}-${runAttempt}`;
+        const uniqueKey = runId ? `${runId}-${runAttempt}` : `local-${Date.now()}`;
         const cacheKey = useTmpfs
             ? `tmpfs-${sizeGb}gb-${uniqueKey}`
             : `disk-${sizeGb}gb-${uniqueKey}`;
@@ -40466,7 +40519,7 @@ async function run() {
         // Step 2: Save to cache
         core.startGroup('Step 2: Save to cache');
         const saveStart = Date.now();
-        const cacheId = await cache.saveCache([filesPath], cacheKey);
+        const cacheId = await saveCacheWithRetry([filesPath], cacheKey);
         const saveTimeMs = Date.now() - saveStart;
         if (cacheId === -1) {
             core.warning('Cache save returned -1 (cache may already exist)');
@@ -40486,7 +40539,7 @@ async function run() {
         // Step 4: Restore from cache
         core.startGroup('Step 4: Restore from cache');
         const restoreStart = Date.now();
-        const restoredKey = await cache.restoreCache([filesPath], cacheKey);
+        const restoredKey = await restoreCacheWithRetry([filesPath], cacheKey);
         const restoreTimeMs = Date.now() - restoreStart;
         if (!restoredKey) {
             throw new Error('Cache restore failed - no matching cache found');
