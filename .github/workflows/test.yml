@@ -23,6 +23,7 @@ on:
           - 'traditional'
           - 'tmpfs'
           - 'mountable'
+          - 'juicefs'
 
 jobs:
   # Traditional cache benchmark (actions/cache) - files and archive on disk
@@ -87,11 +88,6 @@ jobs:
       individual_first_byte: ${{ steps.benchmark.outputs.individual_first_byte }}
       individual_sample_time: ${{ steps.benchmark.outputs.individual_sample_time }}
       individual_hydrate_time: ${{ steps.benchmark.outputs.individual_hydrate_time }}
-      juicefs_mount_time: ${{ steps.benchmark.outputs.juicefs_mount_time }}
-      juicefs_first_byte: ${{ steps.benchmark.outputs.juicefs_first_byte }}
-      juicefs_sample_time: ${{ steps.benchmark.outputs.juicefs_sample_time }}
-      juicefs_hydrate_cold: ${{ steps.benchmark.outputs.juicefs_hydrate_cold }}
-      juicefs_hydrate_warm: ${{ steps.benchmark.outputs.juicefs_hydrate_warm }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -107,10 +103,35 @@ jobs:
           chmod +x scripts/benchmark-mountable.sh
           scripts/benchmark-mountable.sh "${{ secrets.CACHE_BLOB_SAS_URL }}" "${{ inputs.size-gb }}"
 
+  # JuiceFS benchmark (separate due to longer runtime)
+  juicefs:
+    if: ${{ inputs.mode == 'all' || inputs.mode == 'juicefs' }}
+    runs-on: ubuntu-latest
+    outputs:
+      juicefs_mount_time: ${{ steps.benchmark.outputs.juicefs_mount_time }}
+      juicefs_first_byte: ${{ steps.benchmark.outputs.juicefs_first_byte }}
+      juicefs_sample_time: ${{ steps.benchmark.outputs.juicefs_sample_time }}
+      juicefs_hydrate_cold: ${{ steps.benchmark.outputs.juicefs_hydrate_cold }}
+      juicefs_hydrate_warm: ${{ steps.benchmark.outputs.juicefs_hydrate_warm }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run JuiceFS benchmark
+        id: benchmark
+        run: |
+          chmod +x scripts/benchmark-juicefs.sh
+          scripts/benchmark-juicefs.sh "${{ secrets.CACHE_BLOB_SAS_URL }}" "${{ inputs.size-gb }}"
+
   # Summary
   summary:
     if: always() && inputs.mode == 'all'
-    needs: [traditional, tmpfs, mountable]
+    needs: [traditional, tmpfs, mountable, juicefs]
     runs-on: ubuntu-latest
     steps:
       - name: Print comparison
@@ -142,10 +163,10 @@ jobs:
           echo "  Full hydration:        ${{ needs.mountable.outputs.individual_hydrate_time }}ms"
           echo ""
           echo "JUICEFS (smart prefetch + block cache):"
-          echo "  Total mount time:      ${{ needs.mountable.outputs.juicefs_mount_time }}ms"
-          echo "  Time to first byte:    ${{ needs.mountable.outputs.juicefs_first_byte }}ms"
-          echo "  10 random files:       ${{ needs.mountable.outputs.juicefs_sample_time }}ms"
-          echo "  Full hydration (cold): ${{ needs.mountable.outputs.juicefs_hydrate_cold }}ms"
-          echo "  Full read (warm):      ${{ needs.mountable.outputs.juicefs_hydrate_warm }}ms"
+          echo "  Total mount time:      ${{ needs.juicefs.outputs.juicefs_mount_time }}ms"
+          echo "  Time to first byte:    ${{ needs.juicefs.outputs.juicefs_first_byte }}ms"
+          echo "  10 random files:       ${{ needs.juicefs.outputs.juicefs_sample_time }}ms"
+          echo "  Full hydration (cold): ${{ needs.juicefs.outputs.juicefs_hydrate_cold }}ms"
+          echo "  Full read (warm):      ${{ needs.juicefs.outputs.juicefs_hydrate_warm }}ms"
           echo ""
           echo "==========================================" 

@@ -40437,9 +40437,11 @@ async function run() {
             const workDir = process.cwd();
             filesPath = path.join(workDir, 'files');
         }
-        // Use a different cache key for tmpfs to avoid conflicts
+        // Cache key includes the path to avoid version mismatches
+        // (the cache version hash includes file paths, so different tmpfs locations = different versions)
+        const pathHash = filesPath.replace(/[^a-zA-Z0-9]/g, '-');
         const cacheKey = useTmpfs
-            ? `benchmark-cache-tmpfs-${sizeGb}gb-v1`
+            ? `benchmark-cache-tmpfs-${pathHash}-${sizeGb}gb-v1`
             : `benchmark-cache-${sizeGb}gb-v1`;
         core.info(`Configured for ${sizeGb}GB, cache key: ${cacheKey}`);
         core.info(`Files path: ${filesPath}`);
