@@ -271,21 +271,26 @@ CACHED_HYDRATE_WARM=$HYDRATE2_TIME
 echo ""
 echo "=== Benchmark 3: Individual Files (on-demand, no squashfs) ==="
 
-# Check if files already uploaded to blob storage
+# Check if files already uploaded to blob storage by listing the container
 INDIVIDUAL_PREFIX="cache-${SIZE_GB}gb-files"
-MARKER_BLOB="${CONTAINER_URL_NO_SAS}/${INDIVIDUAL_PREFIX}/.marker?${SAS_TOKEN}"
-MARKER_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -I "${MARKER_BLOB}")
+echo "Checking for individual files at prefix: ${INDIVIDUAL_PREFIX}"
 
-if [ "$MARKER_STATUS" == "200" ]; then
-    echo "Individual files already uploaded (marker found)"
+# Use Azure REST API to list blobs with the prefix (skip the marker check)
+LIST_URL="${CONTAINER_URL_NO_SAS}?restype=container&comp=list&prefix=${INDIVIDUAL_PREFIX}/dir_&${SAS_TOKEN}"
+BLOB_COUNT=$(curl -s "$LIST_URL" | grep -c "<Name>" || echo "0")
+echo "Found $BLOB_COUNT blobs with prefix ${INDIVIDUAL_PREFIX}/dir_"
+
+if [ "$BLOB_COUNT" -gt 10 ]; then
+    echo "Individual files already uploaded ($BLOB_COUNT blobs found)"
 else
-    echo "Individual files not found, uploading..."
+    echo "Individual files not found or incomplete, uploading..."
     
     # Generate files - always regenerate since squashfs step may have deleted them
     INDIVIDUAL_FILES_DIR="$GITHUB_WORKSPACE/files-individual-upload"
     echo "[$(time_ms)ms] Generating ${SIZE_GB}GB of test files for individual upload..."
     cd $GITHUB_WORKSPACE
     npm ci 2>/dev/null || true
+    rm -rf "$INDIVIDUAL_FILES_DIR"  # Clean any partial data
     npm run generate -- "$SIZE_GB" "$INDIVIDUAL_FILES_DIR"
     
     # Verify files were generated
@@ -314,13 +319,6 @@ else
         --recursive \
         --put-md5 \
         --log-level=WARNING
-    
-    # Create marker file to indicate upload complete
-    echo "uploaded" | curl -X PUT \
-        -H "x-ms-blob-type: BlockBlob" \
-        -H "Content-Type: text/plain" \
-        --data-binary @- \
-        "${MARKER_BLOB}"
     
     UPLOAD_END=$(time_ms)
     UPLOAD_TIME=$((UPLOAD_END - UPLOAD_START))
