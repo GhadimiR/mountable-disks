@@ -31,10 +31,13 @@ JUICEFS_OVERLAY_TARGET="./files-juicefs"
 JUICEFS_OVERLAY_UPPER="/tmp/juicefs-overlay-upper"
 JUICEFS_OVERLAY_WORK="/tmp/juicefs-overlay-work"
 JUICEFS_CACHE_DIR="/tmp/juicefs-cache"
-JUICEFS_NAME="benchmark-${SIZE_GB}gb"
 
 # Use /tmp instead of /mnt to avoid permission issues
 mkdir -p "$JUICEFS_MOUNT" "$JUICEFS_OVERLAY_TARGET" "$JUICEFS_OVERLAY_UPPER" "$JUICEFS_OVERLAY_WORK" "$JUICEFS_CACHE_DIR"
+
+# Use unique volume name with timestamp to avoid "storage not empty" errors
+TIMESTAMP=$(date +%Y%m%d%H%M%S)
+JUICEFS_NAME="bench-${SIZE_GB}gb-${TIMESTAMP}"
 
 # Install JuiceFS
 echo "[$(time_ms)ms] Installing JuiceFS..."

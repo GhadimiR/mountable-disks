@@ -45,7 +45,7 @@ async function run(): Promise<void> {
       core.info('=== TMPFS MODE ENABLED ===');
       core.info(`Detected tmpfs at: ${tmpfsDir}`);
       core.info(`Archive temp dir (RUNNER_TEMP): ${tmpfsRunnerTemp}`);
-      core.info('Files on disk, archive I/O in tmpfs - testing network speed without disk bottleneck');
+      core.info('Files on disk, archive I/O in tmpfs - testing upload/download without disk I/O');
       
       // Create RUNNER_TEMP in tmpfs for archive operations
       if (!fs.existsSync(tmpfsRunnerTemp)) {
@@ -55,27 +55,18 @@ async function run(): Promise<void> {
       process.env['RUNNER_TEMP'] = tmpfsRunnerTemp;
       core.info(`RUNNER_TEMP overridden: ${originalRunnerTemp} -> ${tmpfsRunnerTemp}`);
       
-      // Files go in workspace with unique name
+      // Use same path structure as traditional but different directory name
       const workDir = process.cwd();
-      filesPath = path.join(workDir, 'files-tmpfs-test');
-      
-      // Clean up any stale symlinks or directories
-      try {
-        if (fs.existsSync(filesPath) || fs.lstatSync(filesPath)) {
-          core.info(`Cleaning up existing path at ${filesPath}`);
-          fs.rmSync(filesPath, { recursive: true, force: true });
-        }
-      } catch (e) {
-        // Path doesn't exist, that's fine
-      }
+      filesPath = path.join(workDir, 'files');
     } else {
       const workDir = process.cwd();
       filesPath = path.join(workDir, 'files');
     }
 
-    // Cache key - v3 to avoid conflicts with broken previous caches
+    // Both use same path now - key differentiates them
+    // Use unique timestamp in tmpfs key to avoid stale cache issues
     const cacheKey = useTmpfs 
-      ? `benchmark-cache-tmpfs-${sizeGb}gb-v3`
+      ? `tmpfs-bench-${sizeGb}gb-${Date.now()}`
       : `benchmark-cache-${sizeGb}gb-v1`;
     
     core.info(`Configured for ${sizeGb}GB, cache key: ${cacheKey}`);
