@@ -188,26 +188,48 @@ TOTAL_FILES=$(find "$OVERLAY_TARGET" -type f 2>/dev/null | wc -l)
 TOTAL_SIZE_MB=$((TOTAL_FILES * 2)) # 2MB per file
 echo "Total files to hydrate: $TOTAL_FILES ($TOTAL_SIZE_MB MB)"
 
-# Full read (hydration) - use dd for bulk read with progress
-echo "Starting full hydration (streaming) - reading all files..."
+# Full read (hydration) - simple sequential with logging
+echo "Starting full hydration (streaming)..."
 HYDRATE_START=$(time_ms)
+FILES_READ=0
 
-# Simple approach: tar to /dev/null shows progress and reads all files
-cd "$OVERLAY_TARGET"
-tar cf - . 2>/dev/null | pv -f -s "${TOTAL_SIZE_MB}m" > /dev/null 2>&1 || \
-    find . -type f -print0 | xargs -0 -P 8 cat > /dev/null
+echo "[0ms] Beginning file enumeration..."
+FILE_LIST=$(find "$OVERLAY_TARGET" -type f 2>/dev/null)
+ENUM_TIME=$(($(time_ms) - HYDRATE_START))
+echo "[${ENUM_TIME}ms] File enumeration complete"
+
+echo "[${ENUM_TIME}ms] Beginning sequential reads..."
+for file in $FILE_LIST; do
+    cat "$file" > /dev/null
+    FILES_READ=$((FILES_READ + 1))
+    
+    # Log every 10 files
+    if [ $((FILES_READ % 10)) -eq 0 ]; then
+        ELAPSED=$(($(time_ms) - HYDRATE_START))
+        MB_READ=$((FILES_READ * 2))
+        RATE=$((MB_READ * 1000 / (ELAPSED + 1)))
+        echo "[${ELAPSED}ms] Read ${FILES_READ}/${TOTAL_FILES} files, ${MB_READ}MB (${RATE} MB/s)"
+    fi
+done
 
 HYDRATE_END=$(time_ms)
 HYDRATE_TIME=$((HYDRATE_END - HYDRATE_START))
 HYDRATE_RATE=$((TOTAL_SIZE_MB * 1000 / (HYDRATE_TIME + 1)))
-cd - > /dev/null
-echo "[${HYDRATE_TIME}ms] Full hydration (streaming): ${HYDRATE_TIME}ms (${HYDRATE_RATE} MB/s)"
+echo "[${HYDRATE_TIME}ms] Full hydration (streaming) complete: ${HYDRATE_TIME}ms (${HYDRATE_RATE} MB/s)"
+
+echo ""
+echo "[$(time_ms)ms] Starting cleanup for streaming benchmark..."
 
 # Cleanup
+echo "[$(time_ms)ms] Unmounting overlay..."
 sudo umount "$OVERLAY_TARGET" || true
+echo "[$(time_ms)ms] Unmounting squashfs..."
 sudo umount "$SQUASHFS_MOUNT" || true
+echo "[$(time_ms)ms] Unmounting blobfuse2..."
 sudo blobfuse2 unmount "$MOUNT_POINT" || true
+echo "[$(time_ms)ms] Cleaning up temp dirs..."
 sudo rm -rf "$OVERLAY_UPPER"/* "$OVERLAY_WORK"/*
+echo "[$(time_ms)ms] Cleanup complete"
 
 STREAMING_MOUNT_TIME=$TOTAL_MOUNT_TIME
 STREAMING_FIRST_BYTE=$FIRST_FILE_TIME
@@ -276,36 +298,69 @@ FIRST_FILE_END=$(time_ms)
 FIRST_FILE_TIME=$((FIRST_FILE_END - FIRST_FILE_START))
 echo "[${FIRST_FILE_END}ms] Time to first byte: ${FIRST_FILE_TIME}ms"
 
-# Full read (hydration) - cold cache
-echo "Hydrating (cold cache) with parallel reads..."
+# Full read (hydration) - cold cache with logging
+echo "Hydrating (cold cache)..."
 HYDRATE_START=$(time_ms)
+FILES_READ=0
 
-cd "$OVERLAY_TARGET"
-find . -type f -print0 | xargs -0 -P 8 cat > /dev/null
-cd - > /dev/null
+echo "[0ms] Beginning file enumeration (cold)..."
+FILE_LIST=$(find "$OVERLAY_TARGET" -type f 2>/dev/null)
+ENUM_TIME=$(($(time_ms) - HYDRATE_START))
+echo "[${ENUM_TIME}ms] File enumeration complete (cold)"
+
+echo "[${ENUM_TIME}ms] Beginning sequential reads (cold)..."
+for file in $FILE_LIST; do
+    cat "$file" > /dev/null
+    FILES_READ=$((FILES_READ + 1))
+    
+    if [ $((FILES_READ % 10)) -eq 0 ]; then
+        ELAPSED=$(($(time_ms) - HYDRATE_START))
+        MB_READ=$((FILES_READ * 2))
+        RATE=$((MB_READ * 1000 / (ELAPSED + 1)))
+        echo "[${ELAPSED}ms] Cold read ${FILES_READ}/${TOTAL_FILES} files, ${MB_READ}MB (${RATE} MB/s)"
+    fi
+done
 
 HYDRATE_END=$(time_ms)
 HYDRATE_TIME=$((HYDRATE_END - HYDRATE_START))
 HYDRATE_RATE=$((TOTAL_SIZE_MB * 1000 / (HYDRATE_TIME + 1)))
-echo "[${HYDRATE_TIME}ms] Full hydration (cold cache): ${HYDRATE_TIME}ms (${HYDRATE_RATE} MB/s)"
+echo "[${HYDRATE_TIME}ms] Full hydration (cold cache) complete: ${HYDRATE_TIME}ms (${HYDRATE_RATE} MB/s)"
 
-# Full read - warm cache
-echo "Reading (warm cache) with parallel reads..."
+# Full read - warm cache with logging
+echo ""
+echo "Reading (warm cache)..."
 HYDRATE2_START=$(time_ms)
+FILES_READ=0
 
-cd "$OVERLAY_TARGET"
-find . -type f -print0 | xargs -0 -P 8 cat > /dev/null
-cd - > /dev/null
+echo "[0ms] Beginning sequential reads (warm)..."
+for file in $FILE_LIST; do
+    cat "$file" > /dev/null
+    FILES_READ=$((FILES_READ + 1))
+    
+    if [ $((FILES_READ % 10)) -eq 0 ]; then
+        ELAPSED=$(($(time_ms) - HYDRATE2_START))
+        MB_READ=$((FILES_READ * 2))
+        RATE=$((MB_READ * 1000 / (ELAPSED + 1)))
+        echo "[${ELAPSED}ms] Warm read ${FILES_READ}/${TOTAL_FILES} files, ${MB_READ}MB (${RATE} MB/s)"
+    fi
+done
 
 HYDRATE2_END=$(time_ms)
 HYDRATE2_TIME=$((HYDRATE2_END - HYDRATE2_START))
 HYDRATE2_RATE=$((TOTAL_SIZE_MB * 1000 / (HYDRATE2_TIME + 1)))
-echo "[${HYDRATE2_TIME}ms] Full read (warm cache): ${HYDRATE2_TIME}ms (${HYDRATE2_RATE} MB/s)"
+echo "[${HYDRATE2_TIME}ms] Full read (warm cache) complete: ${HYDRATE2_TIME}ms (${HYDRATE2_RATE} MB/s)"
+
+echo ""
+echo "[$(time_ms)ms] Starting cleanup for cached benchmark..."
 
 # Cleanup
+echo "[$(time_ms)ms] Unmounting overlay..."
 sudo umount "$OVERLAY_TARGET" || true
+echo "[$(time_ms)ms] Unmounting squashfs..."
 sudo umount "$SQUASHFS_MOUNT" || true
+echo "[$(time_ms)ms] Unmounting blobfuse2..."
 sudo blobfuse2 unmount "$MOUNT_POINT" || true
+echo "[$(time_ms)ms] Cleanup complete"
 
 CACHED_MOUNT_TIME=$TOTAL_MOUNT_TIME
 CACHED_FIRST_BYTE=$FIRST_FILE_TIME
