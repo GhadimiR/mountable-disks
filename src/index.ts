@@ -64,13 +64,16 @@ async function run(): Promise<void> {
     }
 
     // Both use same path now - key differentiates them
-    // Use unique timestamp in tmpfs key to avoid stale cache issues
+    // Fixed key with v4 for fresh start
     const cacheKey = useTmpfs 
-      ? `tmpfs-bench-${sizeGb}gb-${Date.now()}`
+      ? `tmpfs-benchmark-${sizeGb}gb-v4`
       : `benchmark-cache-${sizeGb}gb-v1`;
     
-    core.info(`Configured for ${sizeGb}GB, cache key: ${cacheKey}`);
+    core.info(`Configured for ${sizeGb}GB`);
+    core.info(`Cache key: ${cacheKey}`);
     core.info(`Files path: ${filesPath}`);
+    core.info(`GITHUB_WORKSPACE: ${process.env['GITHUB_WORKSPACE']}`);
+    core.info(`cwd: ${process.cwd()}`);
 
     // Step 1: Generate the file hierarchy
     core.startGroup(`Step 1: Generate ${sizeGb}GB file hierarchy`);
