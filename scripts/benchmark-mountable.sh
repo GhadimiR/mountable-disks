@@ -113,127 +113,17 @@ fi
 sudo mkdir -p "$MOUNT_POINT" "$SQUASHFS_MOUNT" "$OVERLAY_UPPER" "$OVERLAY_WORK" "$BLOBFUSE_CACHE_DIR" "$OVERLAY_TARGET"
 
 #############################################
-# Benchmark 1: Mount with NO local caching
+# SKIP Benchmark 1 - Streaming mode is too slow with squashfs
+# (Each squashfs block read = HTTP roundtrip = ~30s per file)
 #############################################
-echo "=== Benchmark 1: Streaming (no local cache) ==="
-
-# Debug output
-echo "DEBUG: Account=$ACCOUNT"
-echo "DEBUG: Container=$CONTAINER"
-echo "DEBUG: Blob=$BLOB_NAME"
-echo "DEBUG: SAS token length=${#SAS_TOKEN}"
-
-MOUNT_START=$(time_ms)
-
-# Create blobfuse2 config for streaming (no cache)
-# Note: SAS token must be quoted to handle special characters
-cat > /tmp/blobfuse-streaming.yaml << EOF
-allow-other: true
-logging:
-  type: syslog
-  level: log_debug
-components:
-  - libfuse
-  - azstorage
-libfuse:
-  attribute-expiration-sec: 0
-  entry-expiration-sec: 0
-  negative-entry-expiration-sec: 0
-azstorage:
-  type: block
-  account-name: ${ACCOUNT}
-  container: ${CONTAINER}
-  endpoint: https://${ACCOUNT}.blob.core.windows.net
-  mode: sas
-  sas: "${SAS_TOKEN}"
-EOF
-
-echo "DEBUG: blobfuse2 config:"
-cat /tmp/blobfuse-streaming.yaml
-
-sudo blobfuse2 mount "$MOUNT_POINT" --config-file=/tmp/blobfuse-streaming.yaml --read-only
-
-MOUNT_END=$(time_ms)
-MOUNT_TIME=$((MOUNT_END - MOUNT_START))
-echo "[${MOUNT_END}ms] blobfuse2 mount complete: ${MOUNT_TIME}ms"
-
-# Mount squashfs
-SQUASH_START=$(time_ms)
-sudo mount -t squashfs -o ro "$MOUNT_POINT/$BLOB_NAME" "$SQUASHFS_MOUNT"
-SQUASH_END=$(time_ms)
-SQUASH_TIME=$((SQUASH_END - SQUASH_START))
-echo "[${SQUASH_END}ms] squashfs mount complete: ${SQUASH_TIME}ms"
-
-# Mount overlayfs
-OVERLAY_START=$(time_ms)
-sudo mount -t overlay overlay -o "lowerdir=$SQUASHFS_MOUNT,upperdir=$OVERLAY_UPPER,workdir=$OVERLAY_WORK" "$OVERLAY_TARGET"
-OVERLAY_END=$(time_ms)
-OVERLAY_TIME=$((OVERLAY_END - OVERLAY_START))
-echo "[${OVERLAY_END}ms] overlayfs mount complete: ${OVERLAY_TIME}ms"
-
-TOTAL_MOUNT_TIME=$((MOUNT_TIME + SQUASH_TIME + OVERLAY_TIME))
-echo "[${OVERLAY_END}ms] Total mount time (streaming): ${TOTAL_MOUNT_TIME}ms"
-
-# Time to first file
-FIRST_FILE_START=$(time_ms)
-FIRST_FILE=$(find "$OVERLAY_TARGET" -type f 2>/dev/null | head -1)
-echo "First file: $FIRST_FILE"
-head -c 1 "$FIRST_FILE" > /dev/null
-FIRST_FILE_END=$(time_ms)
-FIRST_FILE_TIME=$((FIRST_FILE_END - FIRST_FILE_START))
-echo "[${FIRST_FILE_END}ms] Time to first byte: ${FIRST_FILE_TIME}ms"
-
-# Count total files for progress
-TOTAL_FILES=$(find "$OVERLAY_TARGET" -type f 2>/dev/null | wc -l)
-TOTAL_SIZE_MB=$((TOTAL_FILES * 2)) # 2MB per file
-echo "Total files to hydrate: $TOTAL_FILES ($TOTAL_SIZE_MB MB)"
-
-# Full read (hydration) - simple sequential with logging
-echo "Starting full hydration (streaming)..."
-HYDRATE_START=$(time_ms)
-FILES_READ=0
-
-echo "[0ms] Beginning file enumeration..."
-FILE_LIST=$(find "$OVERLAY_TARGET" -type f 2>/dev/null)
-ENUM_TIME=$(($(time_ms) - HYDRATE_START))
-echo "[${ENUM_TIME}ms] File enumeration complete"
-
-echo "[${ENUM_TIME}ms] Beginning sequential reads..."
-for file in $FILE_LIST; do
-    cat "$file" > /dev/null
-    FILES_READ=$((FILES_READ + 1))
-    
-    # Log every 10 files
-    if [ $((FILES_READ % 10)) -eq 0 ]; then
-        ELAPSED=$(($(time_ms) - HYDRATE_START))
-        MB_READ=$((FILES_READ * 2))
-        RATE=$((MB_READ * 1000 / (ELAPSED + 1)))
-        echo "[${ELAPSED}ms] Read ${FILES_READ}/${TOTAL_FILES} files, ${MB_READ}MB (${RATE} MB/s)"
-    fi
-done
-
-HYDRATE_END=$(time_ms)
-HYDRATE_TIME=$((HYDRATE_END - HYDRATE_START))
-HYDRATE_RATE=$((TOTAL_SIZE_MB * 1000 / (HYDRATE_TIME + 1)))
-echo "[${HYDRATE_TIME}ms] Full hydration (streaming) complete: ${HYDRATE_TIME}ms (${HYDRATE_RATE} MB/s)"
-
+echo "=== SKIPPING Benchmark 1: Streaming mode ==="
+echo "Streaming mode (no local cache) is incompatible with squashfs."
+echo "squashfs makes many small reads per file, each causing an HTTP roundtrip."
 echo ""
-echo "[$(time_ms)ms] Starting cleanup for streaming benchmark..."
 
-# Cleanup
-echo "[$(time_ms)ms] Unmounting overlay..."
-sudo umount "$OVERLAY_TARGET" || true
-echo "[$(time_ms)ms] Unmounting squashfs..."
-sudo umount "$SQUASHFS_MOUNT" || true
-echo "[$(time_ms)ms] Unmounting blobfuse2..."
-sudo blobfuse2 unmount "$MOUNT_POINT" || true
-echo "[$(time_ms)ms] Cleaning up temp dirs..."
-sudo rm -rf "$OVERLAY_UPPER"/* "$OVERLAY_WORK"/*
-echo "[$(time_ms)ms] Cleanup complete"
-
-STREAMING_MOUNT_TIME=$TOTAL_MOUNT_TIME
-STREAMING_FIRST_BYTE=$FIRST_FILE_TIME
-STREAMING_HYDRATE=$HYDRATE_TIME
+STREAMING_MOUNT_TIME=0
+STREAMING_FIRST_BYTE=0
+STREAMING_HYDRATE=0
 
 #############################################
 # Benchmark 2: Mount WITH local caching
