@@ -181,6 +181,13 @@ echo "[${OVERLAY_END}ms] overlayfs mount complete: ${OVERLAY_TIME}ms"
 TOTAL_MOUNT_TIME=$((MOUNT_TIME + SQUASH_TIME + OVERLAY_TIME))
 echo "[${OVERLAY_END}ms] Total mount time (cached): ${TOTAL_MOUNT_TIME}ms"
 
+# Count files and find first file
+TOTAL_FILES=$(find "$OVERLAY_TARGET" -type f 2>/dev/null | wc -l)
+TOTAL_SIZE_MB=$((TOTAL_FILES * 2))
+FIRST_FILE=$(find "$OVERLAY_TARGET" -type f 2>/dev/null | head -1)
+echo "Total files: $TOTAL_FILES ($TOTAL_SIZE_MB MB)"
+echo "First file: $FIRST_FILE"
+
 # Time to first file
 FIRST_FILE_START=$(time_ms)
 head -c 1 "$FIRST_FILE" > /dev/null
