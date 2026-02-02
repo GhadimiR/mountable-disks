@@ -2,8 +2,6 @@ name: Cache Benchmark Test
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 jobs:
   benchmark:
