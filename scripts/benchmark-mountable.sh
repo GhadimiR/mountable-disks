@@ -182,9 +182,28 @@ FIRST_FILE_END=$(time_ms)
 FIRST_FILE_TIME=$((FIRST_FILE_END - FIRST_FILE_START))
 echo "[${FIRST_FILE_END}ms] Time to first byte: ${FIRST_FILE_TIME}ms"
 
-# Full read (hydration)
+# Count total files for progress
+TOTAL_FILES=$(find "$OVERLAY_TARGET" -type f | wc -l)
+echo "Total files to hydrate: $TOTAL_FILES"
+
+# Full read (hydration) with progress
 HYDRATE_START=$(time_ms)
-find "$OVERLAY_TARGET" -type f -exec cat {} + > /dev/null
+FILES_READ=0
+BYTES_READ=0
+find "$OVERLAY_TARGET" -type f | while read -r file; do
+    FILE_SIZE=$(stat -c%s "$file" 2>/dev/null || stat -f%z "$file")
+    cat "$file" > /dev/null
+    FILES_READ=$((FILES_READ + 1))
+    BYTES_READ=$((BYTES_READ + FILE_SIZE))
+    
+    # Progress every 50 files
+    if [ $((FILES_READ % 50)) -eq 0 ]; then
+        ELAPSED=$(($(time_ms) - HYDRATE_START))
+        MB_READ=$((BYTES_READ / 1024 / 1024))
+        RATE=$((MB_READ * 1000 / (ELAPSED + 1)))
+        echo "[${ELAPSED}ms] Hydrating: ${FILES_READ}/${TOTAL_FILES} files, ${MB_READ}MB read (${RATE} MB/s)"
+    fi
+done
 HYDRATE_END=$(time_ms)
 HYDRATE_TIME=$((HYDRATE_END - HYDRATE_START))
 echo "[${HYDRATE_END}ms] Full hydration (streaming): ${HYDRATE_TIME}ms"
@@ -262,16 +281,46 @@ FIRST_FILE_END=$(time_ms)
 FIRST_FILE_TIME=$((FIRST_FILE_END - FIRST_FILE_START))
 echo "[${FIRST_FILE_END}ms] Time to first byte: ${FIRST_FILE_TIME}ms"
 
-# Full read (hydration) - first pass
+# Full read (hydration) - first pass with progress
+echo "Hydrating (cold cache)..."
 HYDRATE_START=$(time_ms)
-find "$OVERLAY_TARGET" -type f -exec cat {} + > /dev/null
+FILES_READ=0
+BYTES_READ=0
+find "$OVERLAY_TARGET" -type f | while read -r file; do
+    FILE_SIZE=$(stat -c%s "$file" 2>/dev/null || stat -f%z "$file")
+    cat "$file" > /dev/null
+    FILES_READ=$((FILES_READ + 1))
+    BYTES_READ=$((BYTES_READ + FILE_SIZE))
+    
+    if [ $((FILES_READ % 50)) -eq 0 ]; then
+        ELAPSED=$(($(time_ms) - HYDRATE_START))
+        MB_READ=$((BYTES_READ / 1024 / 1024))
+        RATE=$((MB_READ * 1000 / (ELAPSED + 1)))
+        echo "[${ELAPSED}ms] Hydrating (cold): ${FILES_READ}/${TOTAL_FILES} files, ${MB_READ}MB (${RATE} MB/s)"
+    fi
+done
 HYDRATE_END=$(time_ms)
 HYDRATE_TIME=$((HYDRATE_END - HYDRATE_START))
 echo "[${HYDRATE_END}ms] Full hydration (cold cache): ${HYDRATE_TIME}ms"
 
-# Full read (hydration) - second pass (from local cache)
+# Full read (hydration) - second pass (from local cache) with progress
+echo "Reading (warm cache)..."
 HYDRATE2_START=$(time_ms)
-find "$OVERLAY_TARGET" -type f -exec cat {} + > /dev/null
+FILES_READ=0
+BYTES_READ=0
+find "$OVERLAY_TARGET" -type f | while read -r file; do
+    FILE_SIZE=$(stat -c%s "$file" 2>/dev/null || stat -f%z "$file")
+    cat "$file" > /dev/null
+    FILES_READ=$((FILES_READ + 1))
+    BYTES_READ=$((BYTES_READ + FILE_SIZE))
+    
+    if [ $((FILES_READ % 50)) -eq 0 ]; then
+        ELAPSED=$(($(time_ms) - HYDRATE2_START))
+        MB_READ=$((BYTES_READ / 1024 / 1024))
+        RATE=$((MB_READ * 1000 / (ELAPSED + 1)))
+        echo "[${ELAPSED}ms] Reading (warm): ${FILES_READ}/${TOTAL_FILES} files, ${MB_READ}MB (${RATE} MB/s)"
+    fi
+done
 HYDRATE2_END=$(time_ms)
 HYDRATE2_TIME=$((HYDRATE2_END - HYDRATE2_START))
 echo "[${HYDRATE2_END}ms] Full read (warm cache): ${HYDRATE2_TIME}ms"
