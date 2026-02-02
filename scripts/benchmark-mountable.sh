@@ -63,17 +63,19 @@ else
         -b 1M \
         -processors "$(nproc)"
     
-    # Upload to Azure
+    # Upload to Azure using streaming (PUT with -T)
     echo ""
     echo "=== Uploading to Azure Blob Storage ==="
     SQUASHFS_SIZE=$(stat -c%s "$LOCAL_SQUASHFS")
+    echo "File size: $SQUASHFS_SIZE bytes"
     
     curl -X PUT \
         -H "x-ms-blob-type: BlockBlob" \
-        -H "Content-Length: $SQUASHFS_SIZE" \
-        --data-binary "@$LOCAL_SQUASHFS" \
+        -H "Content-Type: application/octet-stream" \
+        -T "$LOCAL_SQUASHFS" \
         "${BLOB_SAS_URL}"
     
+    echo ""
     echo "Upload complete."
     
     # Clean up local files
