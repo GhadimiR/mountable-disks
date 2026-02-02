@@ -7,8 +7,5 @@ jobs:
   benchmark:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Run cache benchmark
-        uses: ./
+        uses: GhadimiR/mountable-disks@main
