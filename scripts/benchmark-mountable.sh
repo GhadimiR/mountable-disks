@@ -258,6 +258,176 @@ CACHED_HYDRATE_COLD=$HYDRATE_TIME
 CACHED_HYDRATE_WARM=$HYDRATE2_TIME
 
 #############################################
+# Benchmark 3: Individual files (no squashfs)
+# This is the on-demand approach - files are fetched individually
+#############################################
+echo ""
+echo "=== Benchmark 3: Individual Files (on-demand, no squashfs) ==="
+
+# Check if files already uploaded to blob storage
+INDIVIDUAL_PREFIX="cache-${SIZE_GB}gb-files"
+MARKER_BLOB="${CONTAINER_URL_NO_SAS}/${INDIVIDUAL_PREFIX}/.marker?${SAS_TOKEN}"
+MARKER_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -I "${MARKER_BLOB}")
+
+if [ "$MARKER_STATUS" == "200" ]; then
+    echo "Individual files already uploaded (marker found)"
+else
+    echo "Individual files not found, uploading..."
+    
+    # Generate files if not present
+    if [ ! -d "$GITHUB_WORKSPACE/files" ]; then
+        echo "[$(time_ms)ms] Generating ${SIZE_GB}GB of test files..."
+        cd $GITHUB_WORKSPACE
+        npm ci 2>/dev/null || true
+        npm run generate -- "$SIZE_GB" "./files"
+    fi
+    
+    # Upload files using azcopy (much faster for many files)
+    echo "[$(time_ms)ms] Installing azcopy..."
+    cd /tmp
+    curl -sL https://aka.ms/downloadazcopy-v10-linux | tar xz --strip-components=1
+    sudo mv azcopy /usr/local/bin/
+    
+    echo "[$(time_ms)ms] Uploading individual files to blob storage..."
+    UPLOAD_START=$(time_ms)
+    
+    # Upload entire directory preserving structure
+    azcopy copy "$GITHUB_WORKSPACE/files/*" "${CONTAINER_URL_NO_SAS}/${INDIVIDUAL_PREFIX}/?${SAS_TOKEN}" \
+        --recursive \
+        --put-md5
+    
+    # Create marker file to indicate upload complete
+    echo "uploaded" | curl -X PUT \
+        -H "x-ms-blob-type: BlockBlob" \
+        -H "Content-Type: text/plain" \
+        --data-binary @- \
+        "${MARKER_BLOB}"
+    
+    UPLOAD_END=$(time_ms)
+    UPLOAD_TIME=$((UPLOAD_END - UPLOAD_START))
+    echo "[${UPLOAD_TIME}ms] Upload complete"
+    
+    # Cleanup local files
+    rm -rf "$GITHUB_WORKSPACE/files"
+fi
+
+# Setup for individual files benchmark
+INDIVIDUAL_MOUNT="/mnt/individual-cache"
+INDIVIDUAL_OVERLAY_TARGET="./files-individual"
+INDIVIDUAL_OVERLAY_UPPER="/tmp/individual-overlay-upper"
+INDIVIDUAL_OVERLAY_WORK="/tmp/individual-overlay-work"
+INDIVIDUAL_BLOBFUSE_CACHE="/tmp/individual-blobfuse-cache"
+
+sudo mkdir -p "$INDIVIDUAL_MOUNT" "$INDIVIDUAL_OVERLAY_TARGET" "$INDIVIDUAL_OVERLAY_UPPER" "$INDIVIDUAL_OVERLAY_WORK" "$INDIVIDUAL_BLOBFUSE_CACHE"
+
+echo ""
+echo "--- Individual Files: On-Demand Mode (streaming) ---"
+
+INDIVIDUAL_MOUNT_START=$(time_ms)
+
+# Create blobfuse2 config for individual files - minimal caching for true on-demand
+cat > /tmp/blobfuse-individual-streaming.yaml << EOF
+allow-other: true
+logging:
+  type: silent
+components:
+  - libfuse
+  - stream
+  - azstorage
+libfuse:
+  attribute-expiration-sec: 120
+  entry-expiration-sec: 120
+stream:
+  block-size-mb: 4
+  buffer-size-mb: 16
+  max-buffers: 4
+azstorage:
+  type: block
+  account-name: ${ACCOUNT}
+  container: ${CONTAINER}
+  endpoint: https://${ACCOUNT}.blob.core.windows.net
+  mode: sas
+  sas: "${SAS_TOKEN}"
+  virtual-directory: true
+  subdirectory: ${INDIVIDUAL_PREFIX}
+EOF
+
+sudo blobfuse2 mount "$INDIVIDUAL_MOUNT" --config-file=/tmp/blobfuse-individual-streaming.yaml --read-only
+
+INDIVIDUAL_MOUNT_END=$(time_ms)
+INDIVIDUAL_MOUNT_TIME=$((INDIVIDUAL_MOUNT_END - INDIVIDUAL_MOUNT_START))
+echo "[${INDIVIDUAL_MOUNT_TIME}ms] blobfuse2 mount (individual files) complete: ${INDIVIDUAL_MOUNT_TIME}ms"
+
+# Mount overlayfs (no squashfs needed!)
+INDIVIDUAL_OVERLAY_START=$(time_ms)
+sudo mount -t overlay overlay -o "lowerdir=$INDIVIDUAL_MOUNT,upperdir=$INDIVIDUAL_OVERLAY_UPPER,workdir=$INDIVIDUAL_OVERLAY_WORK" "$INDIVIDUAL_OVERLAY_TARGET"
+INDIVIDUAL_OVERLAY_END=$(time_ms)
+INDIVIDUAL_OVERLAY_TIME=$((INDIVIDUAL_OVERLAY_END - INDIVIDUAL_OVERLAY_START))
+echo "[${INDIVIDUAL_OVERLAY_TIME}ms] overlayfs mount complete: ${INDIVIDUAL_OVERLAY_TIME}ms"
+
+INDIVIDUAL_TOTAL_MOUNT=$((INDIVIDUAL_MOUNT_TIME + INDIVIDUAL_OVERLAY_TIME))
+echo "[${INDIVIDUAL_TOTAL_MOUNT}ms] Total mount time (individual files): ${INDIVIDUAL_TOTAL_MOUNT}ms"
+
+# Time to first file
+echo ""
+echo "Testing on-demand file access..."
+INDIVIDUAL_FIRST_START=$(time_ms)
+INDIVIDUAL_FIRST_FILE=$(find "$INDIVIDUAL_OVERLAY_TARGET" -type f 2>/dev/null | head -1)
+echo "First file: $INDIVIDUAL_FIRST_FILE"
+head -c 1 "$INDIVIDUAL_FIRST_FILE" > /dev/null
+INDIVIDUAL_FIRST_END=$(time_ms)
+INDIVIDUAL_FIRST_TIME=$((INDIVIDUAL_FIRST_END - INDIVIDUAL_FIRST_START))
+echo "[${INDIVIDUAL_FIRST_TIME}ms] Time to first byte (on-demand): ${INDIVIDUAL_FIRST_TIME}ms"
+
+# Read a few files on-demand
+echo ""
+echo "Reading 10 random files on-demand..."
+INDIVIDUAL_SAMPLE_START=$(time_ms)
+SAMPLE_FILES=$(find "$INDIVIDUAL_OVERLAY_TARGET" -type f 2>/dev/null | shuf | head -10)
+for f in $SAMPLE_FILES; do
+    cat "$f" > /dev/null
+done
+INDIVIDUAL_SAMPLE_END=$(time_ms)
+INDIVIDUAL_SAMPLE_TIME=$((INDIVIDUAL_SAMPLE_END - INDIVIDUAL_SAMPLE_START))
+echo "[${INDIVIDUAL_SAMPLE_TIME}ms] 10 random files read in ${INDIVIDUAL_SAMPLE_TIME}ms (avg: $((INDIVIDUAL_SAMPLE_TIME / 10))ms per file)"
+
+# Count files for full hydration
+INDIVIDUAL_TOTAL_FILES=$(find "$INDIVIDUAL_OVERLAY_TARGET" -type f 2>/dev/null | wc -l)
+INDIVIDUAL_TOTAL_SIZE_MB=$((INDIVIDUAL_TOTAL_FILES * 2))
+echo "Total files available: $INDIVIDUAL_TOTAL_FILES ($INDIVIDUAL_TOTAL_SIZE_MB MB)"
+
+# Full hydration test
+echo ""
+echo "Full hydration (all files, on-demand)..."
+INDIVIDUAL_HYDRATE_START=$(time_ms)
+FILES_READ=0
+
+FILE_LIST=$(find "$INDIVIDUAL_OVERLAY_TARGET" -type f 2>/dev/null)
+for file in $FILE_LIST; do
+    cat "$file" > /dev/null
+    FILES_READ=$((FILES_READ + 1))
+    
+    if [ $((FILES_READ % 50)) -eq 0 ]; then
+        ELAPSED=$(($(time_ms) - INDIVIDUAL_HYDRATE_START))
+        MB_READ=$((FILES_READ * 2))
+        RATE=$((MB_READ * 1000 / (ELAPSED + 1)))
+        echo "[${ELAPSED}ms] On-demand read ${FILES_READ}/${INDIVIDUAL_TOTAL_FILES} files, ${MB_READ}MB (${RATE} MB/s)"
+    fi
+done
+
+INDIVIDUAL_HYDRATE_END=$(time_ms)
+INDIVIDUAL_HYDRATE_TIME=$((INDIVIDUAL_HYDRATE_END - INDIVIDUAL_HYDRATE_START))
+INDIVIDUAL_HYDRATE_RATE=$((INDIVIDUAL_TOTAL_SIZE_MB * 1000 / (INDIVIDUAL_HYDRATE_TIME + 1)))
+echo "[${INDIVIDUAL_HYDRATE_TIME}ms] Full hydration (individual files): ${INDIVIDUAL_HYDRATE_TIME}ms (${INDIVIDUAL_HYDRATE_RATE} MB/s)"
+
+# Cleanup
+echo ""
+echo "[$(time_ms)ms] Cleaning up individual files benchmark..."
+sudo umount "$INDIVIDUAL_OVERLAY_TARGET" || true
+sudo blobfuse2 unmount "$INDIVIDUAL_MOUNT" || true
+echo "[$(time_ms)ms] Cleanup complete"
+
+#############################################
 # Output results
 #############################################
 echo ""
@@ -265,24 +435,26 @@ echo "=========================================="
 echo "        MOUNTABLE CACHE BENCHMARK"
 echo "=========================================="
 echo ""
-echo "STREAMING MODE (no local cache):"
-echo "  Total mount time:    ${STREAMING_MOUNT_TIME}ms"
-echo "  Time to first byte:  ${STREAMING_FIRST_BYTE}ms"
-echo "  Full hydration:      ${STREAMING_HYDRATE}ms"
-echo ""
-echo "CACHED MODE (blobfuse2 file cache):"
-echo "  Total mount time:    ${CACHED_MOUNT_TIME}ms"
-echo "  Time to first byte:  ${CACHED_FIRST_BYTE}ms"
+echo "SQUASHFS + CACHED MODE (blobfuse2 file cache):"
+echo "  Total mount time:      ${CACHED_MOUNT_TIME}ms"
+echo "  Time to first byte:    ${CACHED_FIRST_BYTE}ms"
 echo "  Full hydration (cold): ${CACHED_HYDRATE_COLD}ms"
-echo "  Full read (warm):    ${CACHED_HYDRATE_WARM}ms"
+echo "  Full read (warm):      ${CACHED_HYDRATE_WARM}ms"
+echo ""
+echo "INDIVIDUAL FILES (on-demand, no squashfs):"
+echo "  Total mount time:      ${INDIVIDUAL_TOTAL_MOUNT}ms"
+echo "  Time to first byte:    ${INDIVIDUAL_FIRST_TIME}ms"
+echo "  10 random files:       ${INDIVIDUAL_SAMPLE_TIME}ms (avg: $((INDIVIDUAL_SAMPLE_TIME / 10))ms)"
+echo "  Full hydration:        ${INDIVIDUAL_HYDRATE_TIME}ms (${INDIVIDUAL_HYDRATE_RATE} MB/s)"
 echo ""
 echo "=========================================="
 
 # Output as GitHub Actions step outputs
-echo "streaming_mount_time=${STREAMING_MOUNT_TIME}" >> $GITHUB_OUTPUT
-echo "streaming_first_byte=${STREAMING_FIRST_BYTE}" >> $GITHUB_OUTPUT
-echo "streaming_hydrate=${STREAMING_HYDRATE}" >> $GITHUB_OUTPUT
 echo "cached_mount_time=${CACHED_MOUNT_TIME}" >> $GITHUB_OUTPUT
 echo "cached_first_byte=${CACHED_FIRST_BYTE}" >> $GITHUB_OUTPUT
 echo "cached_hydrate_cold=${CACHED_HYDRATE_COLD}" >> $GITHUB_OUTPUT
 echo "cached_hydrate_warm=${CACHED_HYDRATE_WARM}" >> $GITHUB_OUTPUT
+echo "individual_mount_time=${INDIVIDUAL_TOTAL_MOUNT}" >> $GITHUB_OUTPUT
+echo "individual_first_byte=${INDIVIDUAL_FIRST_TIME}" >> $GITHUB_OUTPUT
+echo "individual_sample_time=${INDIVIDUAL_SAMPLE_TIME}" >> $GITHUB_OUTPUT
+echo "individual_hydrate_time=${INDIVIDUAL_HYDRATE_TIME}" >> $GITHUB_OUTPUT

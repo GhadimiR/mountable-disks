@@ -44,13 +44,14 @@ jobs:
     if: ${{ inputs.mode == 'all' || inputs.mode == 'mountable' }}
     runs-on: ubuntu-latest
     outputs:
-      streaming_mount_time: ${{ steps.benchmark.outputs.streaming_mount_time }}
-      streaming_first_byte: ${{ steps.benchmark.outputs.streaming_first_byte }}
-      streaming_hydrate: ${{ steps.benchmark.outputs.streaming_hydrate }}
       cached_mount_time: ${{ steps.benchmark.outputs.cached_mount_time }}
       cached_first_byte: ${{ steps.benchmark.outputs.cached_first_byte }}
       cached_hydrate_cold: ${{ steps.benchmark.outputs.cached_hydrate_cold }}
       cached_hydrate_warm: ${{ steps.benchmark.outputs.cached_hydrate_warm }}
+      individual_mount_time: ${{ steps.benchmark.outputs.individual_mount_time }}
+      individual_first_byte: ${{ steps.benchmark.outputs.individual_first_byte }}
+      individual_sample_time: ${{ steps.benchmark.outputs.individual_sample_time }}
+      individual_hydrate_time: ${{ steps.benchmark.outputs.individual_hydrate_time }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -79,19 +80,20 @@ jobs:
           echo "=========================================="
           echo ""
           echo "TRADITIONAL CACHE (actions/cache v4):"
-          echo "  Generate time:     ${{ needs.traditional.outputs.generate_time }}ms"
-          echo "  Cache save time:   ${{ needs.traditional.outputs.save_time }}ms"
-          echo "  Cache restore time: ${{ needs.traditional.outputs.restore_time }}ms"
+          echo "  Generate time:       ${{ needs.traditional.outputs.generate_time }}ms"
+          echo "  Cache save time:     ${{ needs.traditional.outputs.save_time }}ms"
+          echo "  Cache restore time:  ${{ needs.traditional.outputs.restore_time }}ms"
           echo ""
-          echo "MOUNTABLE CACHE - STREAMING (no local cache):"
-          echo "  Total mount time:    ${{ needs.mountable.outputs.streaming_mount_time }}ms"
-          echo "  Time to first byte:  ${{ needs.mountable.outputs.streaming_first_byte }}ms"
-          echo "  Full hydration:      ${{ needs.mountable.outputs.streaming_hydrate }}ms"
-          echo ""
-          echo "MOUNTABLE CACHE - CACHED (blobfuse2 file cache):"
-          echo "  Total mount time:    ${{ needs.mountable.outputs.cached_mount_time }}ms"
-          echo "  Time to first byte:  ${{ needs.mountable.outputs.cached_first_byte }}ms"
+          echo "MOUNTABLE CACHE - SQUASHFS (with blobfuse2 file cache):"
+          echo "  Total mount time:      ${{ needs.mountable.outputs.cached_mount_time }}ms"
+          echo "  Time to first byte:    ${{ needs.mountable.outputs.cached_first_byte }}ms"
           echo "  Full hydration (cold): ${{ needs.mountable.outputs.cached_hydrate_cold }}ms"
-          echo "  Full read (warm):    ${{ needs.mountable.outputs.cached_hydrate_warm }}ms"
+          echo "  Full read (warm):      ${{ needs.mountable.outputs.cached_hydrate_warm }}ms"
+          echo ""
+          echo "MOUNTABLE CACHE - INDIVIDUAL FILES (on-demand):"
+          echo "  Total mount time:      ${{ needs.mountable.outputs.individual_mount_time }}ms"
+          echo "  Time to first byte:    ${{ needs.mountable.outputs.individual_first_byte }}ms"
+          echo "  10 random files:       ${{ needs.mountable.outputs.individual_sample_time }}ms"
+          echo "  Full hydration:        ${{ needs.mountable.outputs.individual_hydrate_time }}ms"
           echo ""
           echo "==========================================" 
