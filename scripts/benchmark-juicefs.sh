@@ -35,8 +35,11 @@ JUICEFS_CACHE_DIR="/tmp/juicefs-cache"
 # Use /tmp instead of /mnt to avoid permission issues
 mkdir -p "$JUICEFS_MOUNT" "$JUICEFS_OVERLAY_TARGET" "$JUICEFS_OVERLAY_UPPER" "$JUICEFS_OVERLAY_WORK" "$JUICEFS_CACHE_DIR"
 
-# Fixed volume name so data persists across runs
-JUICEFS_NAME="cache-bench-${SIZE_GB}gb"
+# Unique volume name per run (Redis metadata is ephemeral in CI)
+RUN_ID="${GITHUB_RUN_ID:-local}"
+RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT:-1}"
+JUICEFS_NAME="cache-bench-${SIZE_GB}gb-${RUN_ID}-${RUN_ATTEMPT}"
+JUICEFS_BUCKET_BASE="https://${ACCOUNT}.blob.core.windows.net/${CONTAINER}/juicefs-${JUICEFS_NAME}"
 
 # Install JuiceFS
 echo "[$(time_ms)ms] Installing JuiceFS..."
@@ -47,6 +50,7 @@ echo "[$(time_ms)ms] JuiceFS installed in $((JUICEFS_INSTALL_END - JUICEFS_INSTA
 
 # Start Redis for metadata
 echo "[$(time_ms)ms] Starting Redis container..."
+docker rm -f redis-juicefs >/dev/null 2>&1 || true
 docker run -d --name redis-juicefs -p 6379:6379 redis:alpine
 sleep 2  # Wait for Redis to start
 
@@ -65,7 +69,7 @@ else
         echo "Using Azure Storage Account Key for authentication"
         juicefs format \
             --storage wasb \
-            --bucket "https://${ACCOUNT}.blob.core.windows.net/${CONTAINER}" \
+            --bucket "${JUICEFS_BUCKET_BASE}" \
             --access-key "${ACCOUNT}" \
             --secret-key "${AZURE_STORAGE_KEY}" \
             --block-size 16384 \
@@ -76,7 +80,7 @@ else
         echo "WARNING: No storage key provided, trying SAS token in URL"
         juicefs format \
             --storage wasb \
-            --bucket "https://${ACCOUNT}.blob.core.windows.net/${CONTAINER}?${SAS_TOKEN}" \
+            --bucket "${JUICEFS_BUCKET_BASE}?${SAS_TOKEN}" \
             --block-size 16384 \
             --compress none \
             "$JUICEFS_META_URL" \
@@ -132,7 +136,6 @@ if [ "$JUICEFS_FILE_COUNT" -lt 100 ]; then
     rm -rf "$JUICEFS_FILES_DIR"
 else
     echo "[$(time_ms)ms] JuiceFS already has $JUICEFS_FILE_COUNT files, skipping upload"
-fi
 fi
 
 # Unmount and remount to clear any local cache for fair test
