@@ -1,0 +1,5 @@
+name: 'Cache Benchmark'
+description: 'Creates 8GB of uncompressible data, saves to cache, deletes, and restores'
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
