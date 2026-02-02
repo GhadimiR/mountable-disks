@@ -52,32 +52,40 @@ sleep 2  # Wait for Redis to start
 JUICEFS_META_URL="redis://localhost:6379/1"
 
 echo "[$(time_ms)ms] Checking JuiceFS filesystem..."
-if ! juicefs status "$JUICEFS_META_URL" 2>/dev/null; then
-    echo "[$(time_ms)ms] Formatting JuiceFS filesystem..."
-    
-    if [ -n "$AZURE_STORAGE_KEY" ]; then
-        # Use Storage Account Key (recommended)
-        echo "Using Azure Storage Account Key for authentication"
-        juicefs format \
-            --storage wasb \
-            --bucket "https://${ACCOUNT}.blob.core.windows.net/${CONTAINER}" \
-            --access-key "${ACCOUNT}" \
-            --secret-key "${AZURE_STORAGE_KEY}" \
-            --block-size 4096 \
-            --compress none \
-            "$JUICEFS_META_URL" \
-            "$JUICEFS_NAME"
-    else
-        # Fallback: try SAS token in URL (may not work)
-        echo "WARNING: No storage key provided, trying SAS token in URL (may not work)"
-        juicefs format \
-            --storage wasb \
-            --bucket "https://${ACCOUNT}.blob.core.windows.net/${CONTAINER}?${SAS_TOKEN}" \
-            --block-size 4096 \
-            --compress none \
-            "$JUICEFS_META_URL" \
-            "$JUICEFS_NAME"
-    fi
+
+# Always destroy and recreate to avoid stale data issues
+if juicefs status "$JUICEFS_META_URL" 2>/dev/null; then
+    echo "[$(time_ms)ms] Destroying existing JuiceFS filesystem..."
+    juicefs destroy "$JUICEFS_META_URL" "$JUICEFS_NAME" --force 2>/dev/null || true
+    sleep 1
+fi
+
+echo "[$(time_ms)ms] Formatting JuiceFS filesystem..."
+
+if [ -n "$AZURE_STORAGE_KEY" ]; then
+    # Use Storage Account Key (recommended)
+    echo "Using Azure Storage Account Key for authentication"
+    juicefs format \
+        --storage wasb \
+        --bucket "https://${ACCOUNT}.blob.core.windows.net/${CONTAINER}" \
+        --access-key "${ACCOUNT}" \
+        --secret-key "${AZURE_STORAGE_KEY}" \
+        --block-size 4096 \
+        --compress none \
+        --force \
+        "$JUICEFS_META_URL" \
+        "$JUICEFS_NAME"
+else
+    # Fallback: try SAS token in URL (may not work)
+    echo "WARNING: No storage key provided, trying SAS token in URL (may not work)"
+    juicefs format \
+        --storage wasb \
+        --bucket "https://${ACCOUNT}.blob.core.windows.net/${CONTAINER}?${SAS_TOKEN}" \
+        --block-size 4096 \
+        --compress none \
+        --force \
+        "$JUICEFS_META_URL" \
+        "$JUICEFS_NAME"
 fi
 
 # Check if files exist in JuiceFS

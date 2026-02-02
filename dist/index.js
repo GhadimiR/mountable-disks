@@ -40421,27 +40421,35 @@ async function run() {
             core.info('=== TMPFS MODE ENABLED ===');
             core.info(`Detected tmpfs at: ${tmpfsDir}`);
             core.info(`Archive temp dir (RUNNER_TEMP): ${tmpfsRunnerTemp}`);
-            core.info('Note: Files are generated in workspace, only archive I/O uses tmpfs');
+            core.info('Files on disk, archive I/O in tmpfs - testing network speed without disk bottleneck');
             // Create RUNNER_TEMP in tmpfs for archive operations
-            // This makes tar/zstd compression and upload staging happen in memory
             if (!fs.existsSync(tmpfsRunnerTemp)) {
                 fs.mkdirSync(tmpfsRunnerTemp, { recursive: true });
             }
             originalRunnerTemp = process.env['RUNNER_TEMP'];
             process.env['RUNNER_TEMP'] = tmpfsRunnerTemp;
             core.info(`RUNNER_TEMP overridden: ${originalRunnerTemp} -> ${tmpfsRunnerTemp}`);
-            // Files still go in workspace (required for @actions/cache to work correctly)
-            // The tmpfs benefit comes from archive operations being in memory
+            // Files go in workspace with unique name
             const workDir = process.cwd();
-            filesPath = path.join(workDir, 'files-tmpfs');
+            filesPath = path.join(workDir, 'files-tmpfs-test');
+            // Clean up any stale symlinks or directories
+            try {
+                if (fs.existsSync(filesPath) || fs.lstatSync(filesPath)) {
+                    core.info(`Cleaning up existing path at ${filesPath}`);
+                    fs.rmSync(filesPath, { recursive: true, force: true });
+                }
+            }
+            catch (e) {
+                // Path doesn't exist, that's fine
+            }
         }
         else {
             const workDir = process.cwd();
             filesPath = path.join(workDir, 'files');
         }
-        // Cache key - different for tmpfs to avoid conflicts
+        // Cache key - v3 to avoid conflicts with broken previous caches
         const cacheKey = useTmpfs
-            ? `benchmark-cache-tmpfs-${sizeGb}gb-v1`
+            ? `benchmark-cache-tmpfs-${sizeGb}gb-v3`
             : `benchmark-cache-${sizeGb}gb-v1`;
         core.info(`Configured for ${sizeGb}GB, cache key: ${cacheKey}`);
         core.info(`Files path: ${filesPath}`);
