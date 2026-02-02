@@ -176,7 +176,7 @@ echo "[${OVERLAY_END}ms] Total mount time (streaming): ${TOTAL_MOUNT_TIME}ms"
 
 # Time to first file
 FIRST_FILE_START=$(time_ms)
-FIRST_FILE=$(find "$OVERLAY_TARGET" -type f | head -1)
+FIRST_FILE=$(find "$OVERLAY_TARGET" -type f 2>/dev/null | head -1)
 echo "First file: $FIRST_FILE"
 head -c 1 "$FIRST_FILE" > /dev/null
 FIRST_FILE_END=$(time_ms)
@@ -184,33 +184,24 @@ FIRST_FILE_TIME=$((FIRST_FILE_END - FIRST_FILE_START))
 echo "[${FIRST_FILE_END}ms] Time to first byte: ${FIRST_FILE_TIME}ms"
 
 # Count total files for progress
-TOTAL_FILES=$(find "$OVERLAY_TARGET" -type f | wc -l)
+TOTAL_FILES=$(find "$OVERLAY_TARGET" -type f 2>/dev/null | wc -l)
 TOTAL_SIZE_MB=$((TOTAL_FILES * 2)) # 2MB per file
 echo "Total files to hydrate: $TOTAL_FILES ($TOTAL_SIZE_MB MB)"
 
-# Full read (hydration) with progress using parallel reads
-echo "Starting full hydration (streaming)..."
+# Full read (hydration) - use dd for bulk read with progress
+echo "Starting full hydration (streaming) - reading all files..."
 HYDRATE_START=$(time_ms)
 
-# Use xargs for parallel reads - much faster than sequential
-find "$OVERLAY_TARGET" -type f | xargs -P 8 -I {} sh -c 'cat "{}" > /dev/null && echo -n "."' 2>&1 | {
-    COUNT=0
-    while IFS= read -r -n1 char; do
-        COUNT=$((COUNT + 1))
-        if [ $((COUNT % 100)) -eq 0 ]; then
-            ELAPSED=$(($(date +%s%3N) - HYDRATE_START))
-            MB_READ=$((COUNT * 2))
-            RATE=$((MB_READ * 1000 / (ELAPSED + 1)))
-            echo ""
-            echo "[${ELAPSED}ms] Progress: ${COUNT}/${TOTAL_FILES} files, ${MB_READ}MB (${RATE} MB/s)"
-        fi
-    done
-}
+# Simple approach: tar to /dev/null shows progress and reads all files
+cd "$OVERLAY_TARGET"
+tar cf - . 2>/dev/null | pv -f -s "${TOTAL_SIZE_MB}m" > /dev/null 2>&1 || \
+    find . -type f -print0 | xargs -0 -P 8 cat > /dev/null
 
 HYDRATE_END=$(time_ms)
 HYDRATE_TIME=$((HYDRATE_END - HYDRATE_START))
-echo ""
-echo "[${HYDRATE_END}ms] Full hydration (streaming): ${HYDRATE_TIME}ms"
+HYDRATE_RATE=$((TOTAL_SIZE_MB * 1000 / (HYDRATE_TIME + 1)))
+cd - > /dev/null
+echo "[${HYDRATE_TIME}ms] Full hydration (streaming): ${HYDRATE_TIME}ms (${HYDRATE_RATE} MB/s)"
 
 # Cleanup
 sudo umount "$OVERLAY_TARGET" || true
@@ -285,51 +276,31 @@ FIRST_FILE_END=$(time_ms)
 FIRST_FILE_TIME=$((FIRST_FILE_END - FIRST_FILE_START))
 echo "[${FIRST_FILE_END}ms] Time to first byte: ${FIRST_FILE_TIME}ms"
 
-# Full read (hydration) - first pass with parallel reads
-echo "Hydrating (cold cache) with 8 parallel readers..."
+# Full read (hydration) - cold cache
+echo "Hydrating (cold cache) with parallel reads..."
 HYDRATE_START=$(time_ms)
 
-find "$OVERLAY_TARGET" -type f | xargs -P 8 -I {} sh -c 'cat "{}" > /dev/null && echo -n "."' 2>&1 | {
-    COUNT=0
-    while IFS= read -r -n1 char; do
-        COUNT=$((COUNT + 1))
-        if [ $((COUNT % 100)) -eq 0 ]; then
-            ELAPSED=$(($(date +%s%3N) - HYDRATE_START))
-            MB_READ=$((COUNT * 2))
-            RATE=$((MB_READ * 1000 / (ELAPSED + 1)))
-            echo ""
-            echo "[${ELAPSED}ms] Cold cache: ${COUNT}/${TOTAL_FILES} files, ${MB_READ}MB (${RATE} MB/s)"
-        fi
-    done
-}
+cd "$OVERLAY_TARGET"
+find . -type f -print0 | xargs -0 -P 8 cat > /dev/null
+cd - > /dev/null
 
 HYDRATE_END=$(time_ms)
 HYDRATE_TIME=$((HYDRATE_END - HYDRATE_START))
-echo ""
-echo "[${HYDRATE_END}ms] Full hydration (cold cache): ${HYDRATE_TIME}ms"
+HYDRATE_RATE=$((TOTAL_SIZE_MB * 1000 / (HYDRATE_TIME + 1)))
+echo "[${HYDRATE_TIME}ms] Full hydration (cold cache): ${HYDRATE_TIME}ms (${HYDRATE_RATE} MB/s)"
 
-# Full read (hydration) - second pass (from local cache) with parallel reads
-echo "Reading (warm cache) with 8 parallel readers..."
+# Full read - warm cache
+echo "Reading (warm cache) with parallel reads..."
 HYDRATE2_START=$(time_ms)
 
-find "$OVERLAY_TARGET" -type f | xargs -P 8 -I {} sh -c 'cat "{}" > /dev/null && echo -n "."' 2>&1 | {
-    COUNT=0
-    while IFS= read -r -n1 char; do
-        COUNT=$((COUNT + 1))
-        if [ $((COUNT % 100)) -eq 0 ]; then
-            ELAPSED=$(($(date +%s%3N) - HYDRATE2_START))
-            MB_READ=$((COUNT * 2))
-            RATE=$((MB_READ * 1000 / (ELAPSED + 1)))
-            echo ""
-            echo "[${ELAPSED}ms] Warm cache: ${COUNT}/${TOTAL_FILES} files, ${MB_READ}MB (${RATE} MB/s)"
-        fi
-    done
-}
+cd "$OVERLAY_TARGET"
+find . -type f -print0 | xargs -0 -P 8 cat > /dev/null
+cd - > /dev/null
 
 HYDRATE2_END=$(time_ms)
 HYDRATE2_TIME=$((HYDRATE2_END - HYDRATE2_START))
-echo ""
-echo "[${HYDRATE2_END}ms] Full read (warm cache): ${HYDRATE2_TIME}ms"
+HYDRATE2_RATE=$((TOTAL_SIZE_MB * 1000 / (HYDRATE2_TIME + 1)))
+echo "[${HYDRATE2_TIME}ms] Full read (warm cache): ${HYDRATE2_TIME}ms (${HYDRATE2_RATE} MB/s)"
 
 # Cleanup
 sudo umount "$OVERLAY_TARGET" || true
