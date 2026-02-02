@@ -5,6 +5,7 @@ import { generateFileHierarchy, deleteFileHierarchy, verifyFileHierarchy } from 
 
 const FILES_DIR = 'files';
 const CACHE_FILE = 'cache-benchmark.tar.zst';
+const SIZE_GB = 8; // Default size, can be changed for testing
 
 function log(msg: string): void {
   console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -26,9 +27,9 @@ async function run(): Promise<void> {
   }
 
   // Step 1: Generate the file hierarchy
-  log('=== Step 1: Generate 8GB file hierarchy ===');
+  log(`=== Step 1: Generate ${SIZE_GB}GB file hierarchy ===`);
   const genStart = Date.now();
-  await generateFileHierarchy(filesPath);
+  await generateFileHierarchy(filesPath, SIZE_GB);
   const genTime = (Date.now() - genStart) / 1000;
   log(`Generation took ${genTime.toFixed(1)}s`);
 
@@ -62,7 +63,7 @@ async function run(): Promise<void> {
   // Step 5: Verify restoration
   log('=== Step 5: Verify restored data ===');
   const verifyStart = Date.now();
-  const verified = await verifyFileHierarchy(filesPath);
+  const verified = await verifyFileHierarchy(filesPath, SIZE_GB);
   const verifyTime = (Date.now() - verifyStart) / 1000;
   if (!verified) {
     throw new Error('Verification failed!');

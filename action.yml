@@ -1,5 +1,10 @@
 name: 'Cache Benchmark'
-description: 'Creates 8GB of uncompressible data, saves to cache, deletes, and restores'
+description: 'Creates uncompressible data, saves to cache, deletes, and restores'
+inputs:
+  size-gb:
+    description: 'Size of data to generate in GB (1-10)'
+    required: false
+    default: '8'
 runs:
   using: 'node20'
   main: 'dist/index.js'

@@ -3,7 +3,6 @@ import * as cache from '@actions/cache';
 import * as path from 'path';
 import { generateFileHierarchy, deleteFileHierarchy, verifyFileHierarchy } from './generate';
 
-const CACHE_KEY = 'benchmark-cache-8gb-v1';
 const FILES_DIR = 'files';
 
 async function run(): Promise<void> {
@@ -11,10 +10,18 @@ async function run(): Promise<void> {
     const workDir = process.cwd();
     const filesPath = path.join(workDir, FILES_DIR);
 
+    // Read size input
+    const sizeGb = parseInt(core.getInput('size-gb') || '8', 10);
+    if (sizeGb < 1 || sizeGb > 10) {
+      throw new Error('size-gb must be between 1 and 10');
+    }
+    const cacheKey = `benchmark-cache-${sizeGb}gb-v1`;
+    core.info(`Configured for ${sizeGb}GB, cache key: ${cacheKey}`);
+
     // Step 1: Generate the file hierarchy
-    core.startGroup('Step 1: Generate 8GB file hierarchy');
+    core.startGroup(`Step 1: Generate ${sizeGb}GB file hierarchy`);
     const genStart = Date.now();
-    await generateFileHierarchy(filesPath);
+    await generateFileHierarchy(filesPath, sizeGb);
     const genTimeMs = Date.now() - genStart;
     core.info(`[${genTimeMs}ms] Generation complete`);
     core.endGroup();
@@ -22,7 +29,7 @@ async function run(): Promise<void> {
     // Step 2: Save to cache
     core.startGroup('Step 2: Save to cache');
     const saveStart = Date.now();
-    const cacheId = await cache.saveCache([filesPath], CACHE_KEY);
+    const cacheId = await cache.saveCache([filesPath], cacheKey);
     const saveTimeMs = Date.now() - saveStart;
     if (cacheId === -1) {
       core.warning('Cache save returned -1 (cache may already exist)');
@@ -43,7 +50,7 @@ async function run(): Promise<void> {
     // Step 4: Restore from cache
     core.startGroup('Step 4: Restore from cache');
     const restoreStart = Date.now();
-    const restoredKey = await cache.restoreCache([filesPath], CACHE_KEY);
+    const restoredKey = await cache.restoreCache([filesPath], cacheKey);
     const restoreTimeMs = Date.now() - restoreStart;
     if (!restoredKey) {
       throw new Error('Cache restore failed - no matching cache found');
@@ -55,7 +62,7 @@ async function run(): Promise<void> {
     // Step 5: Verify restoration
     core.startGroup('Step 5: Verify restored data');
     const verifyStart = Date.now();
-    const verified = await verifyFileHierarchy(filesPath);
+    const verified = await verifyFileHierarchy(filesPath, sizeGb);
     const verifyTimeMs = Date.now() - verifyStart;
     if (!verified) {
       throw new Error('Verification failed - restored data does not match expected structure');

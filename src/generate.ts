@@ -3,9 +3,8 @@ import * as path from 'path';
 import * as core from '@actions/core';
 import { SeededRandom } from './seeded-random';
 
-// Configuration for 8GB total:
-// 8 level-1 dirs × 10 level-2 dirs × 10 level-3 dirs × 5 files × 2MB = 8GB
-const LEVEL_1_DIRS = 8;
+// Configuration for N GB total:
+// N level-1 dirs × 10 level-2 dirs × 10 level-3 dirs × 5 files × 2MB = N GB
 const LEVEL_2_DIRS = 10;
 const LEVEL_3_DIRS = 10;
 const FILES_PER_LEAF = 5;
@@ -50,14 +49,15 @@ async function writeRandomFile(
 }
 
 /**
- * Generate the complete file hierarchy with 8GB of uncompressible data
+ * Generate the complete file hierarchy with uncompressible data
  */
-export async function generateFileHierarchy(baseDir: string): Promise<void> {
-  const totalFiles = LEVEL_1_DIRS * LEVEL_2_DIRS * LEVEL_3_DIRS * FILES_PER_LEAF;
+export async function generateFileHierarchy(baseDir: string, sizeGb: number): Promise<void> {
+  const level1Dirs = sizeGb; // 1 dir per GB
+  const totalFiles = level1Dirs * LEVEL_2_DIRS * LEVEL_3_DIRS * FILES_PER_LEAF;
   const totalSizeGB = (totalFiles * FILE_SIZE_BYTES) / (1024 * 1024 * 1024);
   
   core.info(`Generating file hierarchy in ${baseDir}`);
-  core.info(`Structure: ${LEVEL_1_DIRS} × ${LEVEL_2_DIRS} × ${LEVEL_3_DIRS} × ${FILES_PER_LEAF} files`);
+  core.info(`Structure: ${level1Dirs} × ${LEVEL_2_DIRS} × ${LEVEL_3_DIRS} × ${FILES_PER_LEAF} files`);
   core.info(`Total: ${totalFiles} files, ${totalSizeGB.toFixed(2)} GB`);
 
   // Create base directory
@@ -66,7 +66,7 @@ export async function generateFileHierarchy(baseDir: string): Promise<void> {
   let filesCreated = 0;
   const startTime = Date.now();
 
-  for (let l1 = 0; l1 < LEVEL_1_DIRS; l1++) {
+  for (let l1 = 0; l1 < level1Dirs; l1++) {
     const l1Dir = path.join(baseDir, `dir_${l1}`);
     
     for (let l2 = 0; l2 < LEVEL_2_DIRS; l2++) {
@@ -115,13 +115,14 @@ export async function deleteFileHierarchy(baseDir: string): Promise<void> {
 /**
  * Verify the file hierarchy exists and has correct structure
  */
-export async function verifyFileHierarchy(baseDir: string): Promise<boolean> {
+export async function verifyFileHierarchy(baseDir: string, sizeGb: number): Promise<boolean> {
   core.info(`Verifying file hierarchy at ${baseDir}`);
   
+  const level1Dirs = sizeGb; // 1 dir per GB
   let filesVerified = 0;
   let totalSize = 0;
 
-  for (let l1 = 0; l1 < LEVEL_1_DIRS; l1++) {
+  for (let l1 = 0; l1 < level1Dirs; l1++) {
     for (let l2 = 0; l2 < LEVEL_2_DIRS; l2++) {
       for (let l3 = 0; l3 < LEVEL_3_DIRS; l3++) {
         for (let f = 0; f < FILES_PER_LEAF; f++) {

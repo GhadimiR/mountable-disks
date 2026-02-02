@@ -33775,9 +33775,8 @@ const fs = __importStar(__nccwpck_require__(9896));
 const path = __importStar(__nccwpck_require__(6928));
 const core = __importStar(__nccwpck_require__(7484));
 const seeded_random_1 = __nccwpck_require__(6947);
-// Configuration for 8GB total:
-// 8 level-1 dirs × 10 level-2 dirs × 10 level-3 dirs × 5 files × 2MB = 8GB
-const LEVEL_1_DIRS = 8;
+// Configuration for N GB total:
+// N level-1 dirs × 10 level-2 dirs × 10 level-3 dirs × 5 files × 2MB = N GB
 const LEVEL_2_DIRS = 10;
 const LEVEL_3_DIRS = 10;
 const FILES_PER_LEAF = 5;
@@ -33814,19 +33813,20 @@ async function writeRandomFile(filePath, seed, size) {
     }
 }
 /**
- * Generate the complete file hierarchy with 8GB of uncompressible data
+ * Generate the complete file hierarchy with uncompressible data
  */
-async function generateFileHierarchy(baseDir) {
-    const totalFiles = LEVEL_1_DIRS * LEVEL_2_DIRS * LEVEL_3_DIRS * FILES_PER_LEAF;
+async function generateFileHierarchy(baseDir, sizeGb) {
+    const level1Dirs = sizeGb; // 1 dir per GB
+    const totalFiles = level1Dirs * LEVEL_2_DIRS * LEVEL_3_DIRS * FILES_PER_LEAF;
     const totalSizeGB = (totalFiles * FILE_SIZE_BYTES) / (1024 * 1024 * 1024);
     core.info(`Generating file hierarchy in ${baseDir}`);
-    core.info(`Structure: ${LEVEL_1_DIRS} × ${LEVEL_2_DIRS} × ${LEVEL_3_DIRS} × ${FILES_PER_LEAF} files`);
+    core.info(`Structure: ${level1Dirs} × ${LEVEL_2_DIRS} × ${LEVEL_3_DIRS} × ${FILES_PER_LEAF} files`);
     core.info(`Total: ${totalFiles} files, ${totalSizeGB.toFixed(2)} GB`);
     // Create base directory
     fs.mkdirSync(baseDir, { recursive: true });
     let filesCreated = 0;
     const startTime = Date.now();
-    for (let l1 = 0; l1 < LEVEL_1_DIRS; l1++) {
+    for (let l1 = 0; l1 < level1Dirs; l1++) {
         const l1Dir = path.join(baseDir, `dir_${l1}`);
         for (let l2 = 0; l2 < LEVEL_2_DIRS; l2++) {
             const l2Dir = path.join(l1Dir, `sub_${l2}`);
@@ -33866,11 +33866,12 @@ async function deleteFileHierarchy(baseDir) {
 /**
  * Verify the file hierarchy exists and has correct structure
  */
-async function verifyFileHierarchy(baseDir) {
+async function verifyFileHierarchy(baseDir, sizeGb) {
     core.info(`Verifying file hierarchy at ${baseDir}`);
+    const level1Dirs = sizeGb; // 1 dir per GB
     let filesVerified = 0;
     let totalSize = 0;
-    for (let l1 = 0; l1 < LEVEL_1_DIRS; l1++) {
+    for (let l1 = 0; l1 < level1Dirs; l1++) {
         for (let l2 = 0; l2 < LEVEL_2_DIRS; l2++) {
             for (let l3 = 0; l3 < LEVEL_3_DIRS; l3++) {
                 for (let f = 0; f < FILES_PER_LEAF; f++) {
@@ -33941,23 +33942,29 @@ const core = __importStar(__nccwpck_require__(7484));
 const cache = __importStar(__nccwpck_require__(5116));
 const path = __importStar(__nccwpck_require__(6928));
 const generate_1 = __nccwpck_require__(3516);
-const CACHE_KEY = 'benchmark-cache-8gb-v1';
 const FILES_DIR = 'files';
 async function run() {
     try {
         const workDir = process.cwd();
         const filesPath = path.join(workDir, FILES_DIR);
+        // Read size input
+        const sizeGb = parseInt(core.getInput('size-gb') || '8', 10);
+        if (sizeGb < 1 || sizeGb > 10) {
+            throw new Error('size-gb must be between 1 and 10');
+        }
+        const cacheKey = `benchmark-cache-${sizeGb}gb-v1`;
+        core.info(`Configured for ${sizeGb}GB, cache key: ${cacheKey}`);
         // Step 1: Generate the file hierarchy
-        core.startGroup('Step 1: Generate 8GB file hierarchy');
+        core.startGroup(`Step 1: Generate ${sizeGb}GB file hierarchy`);
         const genStart = Date.now();
-        await (0, generate_1.generateFileHierarchy)(filesPath);
+        await (0, generate_1.generateFileHierarchy)(filesPath, sizeGb);
         const genTimeMs = Date.now() - genStart;
         core.info(`[${genTimeMs}ms] Generation complete`);
         core.endGroup();
         // Step 2: Save to cache
         core.startGroup('Step 2: Save to cache');
         const saveStart = Date.now();
-        const cacheId = await cache.saveCache([filesPath], CACHE_KEY);
+        const cacheId = await cache.saveCache([filesPath], cacheKey);
         const saveTimeMs = Date.now() - saveStart;
         if (cacheId === -1) {
             core.warning('Cache save returned -1 (cache may already exist)');
@@ -33977,7 +33984,7 @@ async function run() {
         // Step 4: Restore from cache
         core.startGroup('Step 4: Restore from cache');
         const restoreStart = Date.now();
-        const restoredKey = await cache.restoreCache([filesPath], CACHE_KEY);
+        const restoredKey = await cache.restoreCache([filesPath], cacheKey);
         const restoreTimeMs = Date.now() - restoreStart;
         if (!restoredKey) {
             throw new Error('Cache restore failed - no matching cache found');
@@ -33988,7 +33995,7 @@ async function run() {
         // Step 5: Verify restoration
         core.startGroup('Step 5: Verify restored data');
         const verifyStart = Date.now();
-        const verified = await (0, generate_1.verifyFileHierarchy)(filesPath);
+        const verified = await (0, generate_1.verifyFileHierarchy)(filesPath, sizeGb);
         const verifyTimeMs = Date.now() - verifyStart;
         if (!verified) {
             throw new Error('Verification failed - restored data does not match expected structure');
