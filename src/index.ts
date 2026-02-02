@@ -81,6 +81,14 @@ async function run(): Promise<void> {
     core.info(`Total time:         ${genTimeMs + saveTimeMs + deleteTimeMs + restoreTimeMs + verifyTimeMs}ms`);
     core.info('=========================');
 
+    // Set outputs for workflow
+    core.setOutput('generate_time', genTimeMs);
+    core.setOutput('save_time', saveTimeMs);
+    core.setOutput('delete_time', deleteTimeMs);
+    core.setOutput('restore_time', restoreTimeMs);
+    core.setOutput('verify_time', verifyTimeMs);
+    core.setOutput('total_time', genTimeMs + saveTimeMs + deleteTimeMs + restoreTimeMs + verifyTimeMs);
+
   } catch (error) {
     if (error instanceof Error) {
       core.setFailed(error.message);

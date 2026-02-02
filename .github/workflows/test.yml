@@ -13,12 +13,85 @@ on:
           - '2'
           - '4'
           - '8'
+      mode:
+        description: 'Benchmark mode'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - 'all'
+          - 'traditional'
+          - 'mountable'
 
 jobs:
-  benchmark:
+  # Traditional cache benchmark (actions/cache)
+  traditional:
+    if: ${{ inputs.mode == 'all' || inputs.mode == 'traditional' }}
     runs-on: ubuntu-latest
+    outputs:
+      generate_time: ${{ steps.benchmark.outputs.generate_time }}
+      save_time: ${{ steps.benchmark.outputs.save_time }}
+      restore_time: ${{ steps.benchmark.outputs.restore_time }}
     steps:
-      - name: Run cache benchmark
+      - name: Run traditional cache benchmark
+        id: benchmark
         uses: GhadimiR/mountable-disks@main
         with:
           size-gb: ${{ inputs.size-gb }}
+
+  # Mountable cache benchmark (blobfuse2 + squashfs + overlayfs)
+  mountable:
+    if: ${{ inputs.mode == 'all' || inputs.mode == 'mountable' }}
+    runs-on: ubuntu-latest
+    outputs:
+      streaming_mount_time: ${{ steps.benchmark.outputs.streaming_mount_time }}
+      streaming_first_byte: ${{ steps.benchmark.outputs.streaming_first_byte }}
+      streaming_hydrate: ${{ steps.benchmark.outputs.streaming_hydrate }}
+      cached_mount_time: ${{ steps.benchmark.outputs.cached_mount_time }}
+      cached_first_byte: ${{ steps.benchmark.outputs.cached_first_byte }}
+      cached_hydrate_cold: ${{ steps.benchmark.outputs.cached_hydrate_cold }}
+      cached_hydrate_warm: ${{ steps.benchmark.outputs.cached_hydrate_warm }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run mountable cache benchmark
+        id: benchmark
+        run: |
+          chmod +x scripts/benchmark-mountable.sh
+          scripts/benchmark-mountable.sh "${{ secrets.CACHE_BLOB_SAS_URL }}" "${{ inputs.size-gb }}"
+
+  # Summary
+  summary:
+    if: always() && inputs.mode == 'all'
+    needs: [traditional, mountable]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print comparison
+        run: |
+          echo "=========================================="
+          echo "        BENCHMARK COMPARISON"
+          echo "=========================================="
+          echo ""
+          echo "TRADITIONAL CACHE (actions/cache v4):"
+          echo "  Generate time:     ${{ needs.traditional.outputs.generate_time }}ms"
+          echo "  Cache save time:   ${{ needs.traditional.outputs.save_time }}ms"
+          echo "  Cache restore time: ${{ needs.traditional.outputs.restore_time }}ms"
+          echo ""
+          echo "MOUNTABLE CACHE - STREAMING (no local cache):"
+          echo "  Total mount time:    ${{ needs.mountable.outputs.streaming_mount_time }}ms"
+          echo "  Time to first byte:  ${{ needs.mountable.outputs.streaming_first_byte }}ms"
+          echo "  Full hydration:      ${{ needs.mountable.outputs.streaming_hydrate }}ms"
+          echo ""
+          echo "MOUNTABLE CACHE - CACHED (blobfuse2 file cache):"
+          echo "  Total mount time:    ${{ needs.mountable.outputs.cached_mount_time }}ms"
+          echo "  Time to first byte:  ${{ needs.mountable.outputs.cached_first_byte }}ms"
+          echo "  Full hydration (cold): ${{ needs.mountable.outputs.cached_hydrate_cold }}ms"
+          echo "  Full read (warm):    ${{ needs.mountable.outputs.cached_hydrate_warm }}ms"
+          echo ""
+          echo "==========================================" 
