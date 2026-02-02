@@ -281,12 +281,20 @@ if [ "$MARKER_STATUS" == "200" ]; then
 else
     echo "Individual files not found, uploading..."
     
-    # Generate files if not present
-    if [ ! -d "$GITHUB_WORKSPACE/files" ]; then
-        echo "[$(time_ms)ms] Generating ${SIZE_GB}GB of test files..."
-        cd $GITHUB_WORKSPACE
-        npm ci 2>/dev/null || true
-        npm run generate -- "$SIZE_GB" "./files"
+    # Generate files - always regenerate since squashfs step may have deleted them
+    INDIVIDUAL_FILES_DIR="$GITHUB_WORKSPACE/files-individual-upload"
+    echo "[$(time_ms)ms] Generating ${SIZE_GB}GB of test files for individual upload..."
+    cd $GITHUB_WORKSPACE
+    npm ci 2>/dev/null || true
+    npm run generate -- "$SIZE_GB" "$INDIVIDUAL_FILES_DIR"
+    
+    # Verify files were generated
+    GENERATED_COUNT=$(find "$INDIVIDUAL_FILES_DIR" -type f 2>/dev/null | wc -l)
+    echo "[$(time_ms)ms] Generated $GENERATED_COUNT files"
+    
+    if [ "$GENERATED_COUNT" -eq 0 ]; then
+        echo "ERROR: No files generated!"
+        exit 1
     fi
     
     # Upload files using azcopy (much faster for many files)
@@ -294,14 +302,18 @@ else
     cd /tmp
     curl -sL https://aka.ms/downloadazcopy-v10-linux | tar xz --strip-components=1
     sudo mv azcopy /usr/local/bin/
+    cd $GITHUB_WORKSPACE
     
     echo "[$(time_ms)ms] Uploading individual files to blob storage..."
+    echo "Source: $INDIVIDUAL_FILES_DIR"
+    echo "Destination: ${CONTAINER_URL_NO_SAS}/${INDIVIDUAL_PREFIX}/"
     UPLOAD_START=$(time_ms)
     
     # Upload entire directory preserving structure
-    azcopy copy "$GITHUB_WORKSPACE/files/*" "${CONTAINER_URL_NO_SAS}/${INDIVIDUAL_PREFIX}/?${SAS_TOKEN}" \
+    azcopy copy "$INDIVIDUAL_FILES_DIR/*" "${CONTAINER_URL_NO_SAS}/${INDIVIDUAL_PREFIX}/?${SAS_TOKEN}" \
         --recursive \
-        --put-md5
+        --put-md5 \
+        --log-level=WARNING
     
     # Create marker file to indicate upload complete
     echo "uploaded" | curl -X PUT \
@@ -315,7 +327,7 @@ else
     echo "[${UPLOAD_TIME}ms] Upload complete"
     
     # Cleanup local files
-    rm -rf "$GITHUB_WORKSPACE/files"
+    rm -rf "$INDIVIDUAL_FILES_DIR"
 fi
 
 # Setup for individual files benchmark
